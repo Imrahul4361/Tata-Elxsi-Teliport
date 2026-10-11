@@ -1,15 +1,19 @@
 # Tata Elxsi TELIPORT Season 4: Case Selection & Solution
 
 ## Decision
-**Case Study 4 (HLS): End-to-End Medical Device Labeling Automation**, with the solution **LabelTwin: Label-as-Code for self-validating, traceable medical device labels.**
+**Team choice: Case Study 3 (MCV): Adaptive QoS Engine for Mixed Home Broadband Traffic**, with the solution **VeriQ: Experience-Verified, Intent-Aware QoS.**
 
-| Case | Weighted score /10 | Verdict |
+> "Other QoS engines guess. VeriQ verifies." Every policy change is a canary, tested on real experience metrics (call quality score, WebRTC freezes, responsiveness under load, fairness), kept only if it measurably helps, otherwise rolled back automatically.
+
+The earlier analysis recommended Case 4 (LabelTwin). That work is kept below for reference.
+
+| Case | Weighted score /10 | Note |
 |---|:-:|---|
-| CS4 Medical Labeling (HLS) | **8.40** | ✅ Pick: best strategic fit, shallow crowd, visual demo |
-| CS3 Adaptive QoS (MCV) | 8.15 | Runner-up: least crowded, but only if your team already knows Linux `tc`/eBPF |
-| CS5 VehicleGPT (TBU) | 6.65 | Highly relevant but the most hype-crowded |
-| CS2 Battery Platform (IDV) | 5.65 | Every EEE/mech team will pick it; hard to validate |
-| CS1 Predictive Maintenance (ACTG) | 4.75 | C-MAPSS is saturated; almost impossible to stand out |
+| CS4 Medical Labeling (HLS) | 8.40 | Earlier recommendation (docs 03–04) |
+| **CS3 Adaptive QoS (MCV)** | **8.15** | **Chosen**: least crowded, fastest-growing TE vertical, objective metrics |
+| CS5 VehicleGPT (TBU) | 6.65 | Most hype-crowded |
+| CS2 Battery Platform (IDV) | 5.65 | Crowded with EEE/mech teams |
+| CS1 Predictive Maintenance (ACTG) | 4.75 | Saturated dataset |
 
 ## What's in this repo
 | Path | What it is |
@@ -17,14 +21,19 @@
 | `docs/01_Tata_Elxsi_Intelligence.md` | Company research: FY26/Q1 FY27 numbers, vertical momentum, the HLS "AI-first" pivot, Teliport S4 rules |
 | `docs/02_Case_Scorecard.md` | All 5 cases rated on 9 dimensions, hidden traps, competition estimate, tie-breaker test |
 | `docs/03_Solution_Blueprint_LabelTwin.md` | Full solution: reframing, process map + automation matrix, FMEA, architecture, twin schema, rule DSL, 7 engines, trust/compliance, LabelBench validation, business case, stack |
-| `docs/04_Execution_Playbook.md` | Timeline, roles, Round 1 slide guidance, Round 2 10-slide outline, 4-week sprint plan, regulatory crash course, finale demo script, panel Q&A bank |
+| `docs/04_Execution_Playbook.md` | Case 4 playbook (reference) |
+| **`docs/05_Case3_VeriQ_Blueprint.md`** | **VeriQ full design**: why generic QoS fails, architecture, 9 module contracts, 8 scenarios, AI vs baseline, safety properties, known limitations, scaling path, stack |
+| **`docs/06_Case3_VeriQ_Playbook.md`** | **Standout assets ranked** (physical WAN-drop kit, split-screen video, 3D twin…), bill of materials, video script, 3D twin spec, timeline, roles, reading list, panel Q&A |
+| **`lab/quickstart_bufferbloat.sh`** | **Day-0 lab**: builds an emulated home network from network namespaces and measures bufferbloat for FIFO / short-buffer shaper / fq_codel / CAKE arms |
+| **`submission/Round1_Case3_VeriQ.pptx`** | **Round 1 entry for Case 3** (slide 2 is the one-slide submission) + `_preview.png` |
 | `submission/Round1_Case4_LabelTwin.pptx` | Round 1 submission built on the official template (slide 2 is the one-slide entry). Replace `<Team Name>` / `<College>` / members. |
 | `submission/Round1_Case4_LabelTwin_preview.png` | Preview render of the one-slide entry |
-| `tools/build_round1_slide.py` | Regenerates the slide from the template (`pip install python-pptx`) |
+| `tools/build_round1_slide.py` | Regenerates either slide from the template: `--case 3` or `--case 4` (`pip install python-pptx`) |
 | `tools/fda_labeling_recall_miner.py` | Pulls FDA labeling-related device recalls from openFDA and builds the defect taxonomy for LabelBench (stdlib only) |
 | `1790163819038-Teliport S4_.../` | Original case studies and template from Tata Elxsi |
 
 ## Do these first
 1. **Confirm the registration and Round 1 deadlines on the official portal.** Sources conflict: 10 Oct vs **23 Oct** registration, Round 1 on **24 Oct 2026**.
-2. Fill in the team details in the `.pptx`, then export **slide 2 only** to PDF if the portal requires a single page.
-3. Run `python3 tools/fda_labeling_recall_miner.py` on your machine and put one real number on the slide.
+2. On an Ubuntu laptop run `sudo lab/quickstart_bufferbloat.sh`. Replace the "266 ms" Day-0 number on the slide with **your own run**, and add your CAKE result.
+3. Fill in the team details in `submission/Round1_Case3_VeriQ.pptx`, then export **slide 2 only** to PDF if the portal requires a single page.
+4. Keep the repository private: Teliport submissions become Tata Elxsi's IP.
