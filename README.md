@@ -1,9 +1,9 @@
 # Tata Elxsi TELIPORT Season 4: Case Selection & Solution
 
 ## Decision
-**Team choice: Case Study 3 (MCV): Adaptive QoS Engine for Mixed Home Broadband Traffic**, with the solution **VeriQ: Experience-Verified, Intent-Aware QoS.**
+**Team choice: Case Study 3 (MCV): Adaptive QoS Engine for Mixed Home Broadband Traffic**, with the solution **VeriQ v2: intent-aware home QoS with measurable outcomes, bounded adaptation and explainable recovery.**
 
-> "Other QoS engines guess. VeriQ verifies." Every policy change is a canary, tested on real experience metrics (call quality score, WebRTC freezes, responsiveness under load, fairness), kept only if it measurably helps, otherwise rolled back automatically.
+> "VeriQ adapts, measures, and explains." Fast guardrails keep queuing delay bounded. Fault localisation (WAN / remote path / Wi-Fi / bad probe) runs before any action. Every adaptation gets an improved / degraded / inconclusive receipt from real call and video metrics. Performance claims come only from controlled, repeated experiments against tuned SQM-CAKE and cake-autorate. v2 merges an external review; see the change box at the top of doc 05.
 
 The earlier analysis recommended Case 4 (LabelTwin). That work is kept below for reference.
 

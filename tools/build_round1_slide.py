@@ -218,69 +218,68 @@ def build_case4(slide):
 
 def build_case3(slide):
     clear_placeholders(slide)
-    header(slide, "VeriQ", ": Experience-Verified, Intent-Aware QoS for the mixed-traffic home",
+    header(slide, "VeriQ", ": intent-aware home QoS with measurable outcomes & explainable recovery",
            "Case Study 3 · MCV · Adaptive QoS Engine for Mixed Home Broadband Traffic")
 
     # row A: problem / idea / safety
     y, h = 0.98, 1.62
     card(slide, 0.30, y, 4.15, h, "The real problem", [
-        "Queues, not bandwidth: a backup upload filled the modem's oversized FIFO and added 266 ms (p95) to every packet in our Day-0 lab (emulated, 5 Mbit up)",
+        "Queues, not bandwidth: a backup upload filled the modem's oversized FIFO and added 266 ms (p95) in our Day-0 lab (emulated, 5 Mbit up); fq_codel alone can't reach that queue",
         "QUIC/TLS on port 443 defeats port rules; apps rarely set DSCP",
         "Capacity moves (DOCSIS, 5G FWA, Wi-Fi): a static shaper is bloated or wasteful",
     ])
     card(slide, 4.58, y, 4.15, h, "Our idea", [
-        [("“Other QoS engines guess. VeriQ verifies.”", 11.5, True, NAVY)],
-        [("Every policy change is a hypothesis: applied as a ", 10.5, False, INK),
-         ("canary", 10.5, True, INK),
-         (", tested on real experience metrics, kept only if it measurably helps, otherwise ", 10.5, False, INK),
-         ("rolled back automatically", 10.5, True, INK),
-         (", with an experience receipt.", 10.5, False, INK)],
+        [("“VeriQ adapts, measures, and explains.”", 11.5, True, NAVY)],
+        [("Localise the fault first", 10.5, True, INK),
+         (" (own queue, WAN drop, remote path, Wi-Fi, bad probe), then act with bounded fast guardrails. Every adaptation gets an ", 10.5, False, INK),
+         ("experience receipt: improved / degraded / inconclusive", 10.5, True, INK),
+         (", measured on real calls and video.", 10.5, False, INK)],
     ], fill=CARD2, title_color=AMBER)
-    card(slide, 8.86, y, 4.17, h, "Safety by design", [
-        "Never reads payload: headers + timing only; IPv4 + IPv6",
-        [("• ", 10.5, True, BLUE), ("Every class keeps a non-zero floor: no starvation", 10.5, True, INK)],
-        "Abstains when unsure (conformal confidence)",
-        "Versioned, reversible policies; watchdog → known-safe profile in < 1 s",
+    card(slide, 8.86, y, 4.17, h, "Bounded by design", [
+        "Never inspects forwarded payload; headers + timing; IPv4 + IPv6",
+        [("• ", 10.5, True, BLUE), ("Intents = expiring leases with real HTB guaranteed rates from a budget; progress measured", 10.5, True, INK)],
+        "Abstains when unsure: never promotes an uncertain flow",
+        "Versioned, read-back config; watchdog → conservative SAFE shaper",
     ])
 
     # row B: closed loop
-    flow_strip(slide, 2.78, 1.62, "Closed loop: observe → understand → decide → enforce → verify → commit or roll back", [
-        (1.86, "Observe", "eBPF flow observer on tc clsact: sizes, timing, direction of first 30 packets; v4/v6; no payload"),
-        (2.12, "Understand", "Early classifier with calibrated conformal confidence + capacity estimator (one-way-delay / STAMP probes, change-point)"),
-        (2.04, "Decide", "Control loop on queuing delay · shaper = μ − kσ · intents with TTL · fairness floors"),
-        (1.86, "Enforce", "CAKE / HTB via netlink: transactional apply, readback, rollback"),
-        (2.04, "Verify", "Canary statistics on E-model MOS, WebRTC freezes, IETF RPM, Jain fairness"),
-        (1.71, "Show & control", "Grafana · live 3D home-network twin · intent API (REST, TR-181 / USP)"),
-    ], dark="Verify")
+    flow_strip(slide, 2.78, 1.62, "Three speeds: fast guardrails (sub-second) · outcome receipts (tens of seconds) · controlled experiments (lab, for claims)", [
+        (1.86, "Observe", "Header + timing features of first packets per flow; v4/v6; no payload"),
+        (2.12, "Understand", "Early calibrated classifier (abstains) + capacity estimate μ ± σ + fault localiser (near/far probes)"),
+        (2.04, "Decide", "Bounded guardrails: shaper = μ − kσ, change-point fast path · leases within budget"),
+        (1.86, "Enforce", "CAKE (default) or HTB guaranteed mode; ordered, versioned, read-back apply"),
+        (2.04, "Assess", "Receipts on WebRTC freezes, DASH rebuffers, delay, progress; estimated MOS labelled"),
+        (1.71, "Show", "Grafana · 3D twin + replay: measured / estimated / illustrative"),
+    ], dark="Assess")
 
     # row C: innovations / proof
     yc, hc = 4.52, 2.18
     card(slide, 0.30, yc, 6.55, hc, "What makes it different", [
-        [("1  Experience-verified policy transactions: ", 10.5, True, NAVY),
-         ("canary → bootstrap CI / Mann-Whitney on p95 delay and MOS → commit or auto-rollback, each with a receipt", 10.5, False, INK)],
+        [("1  Fault localisation before action: ", 10.5, True, NAVY),
+         ("WAN drop vs remote path vs Wi-Fi vs lying probe, scored against emulator ground truth; a remote slowdown never triggers a wasteful cut", 10.5, False, INK)],
         [("2  Real-app evidence: ", 10.5, True, NAVY),
          ("real encrypted WebRTC calls and DASH players in headless Chromium; we count video freezes and rebuffers, not just pings", 10.5, False, INK)],
         [("3  Payload-free, calibrated classification: ", 10.5, True, NAVY),
-         ("conformal sets → abstain when unsure; one-click correction feeds retraining; accuracy reported per privacy tier", 10.5, False, INK)],
-        [("4  Uncertainty-aware capacity tracking: ", 10.5, True, NAVY),
-         ("Bayesian change-point + delay probes, up and down separately, link-layer overhead compensated", 10.5, False, INK)],
+         ("conformal sets; we report coverage, selective accuracy and abstention separately, including under traffic shift", 10.5, False, INK)],
+        [("4  Honest receipts + replay: ", 10.5, True, NAVY),
+         ("improved / degraded / inconclusive, regime-aware; 3D replay shows inferred vs true ISP queue side by side", 10.5, False, INK)],
     ])
     card(slide, 6.98, yc, 6.05, hc, "How we will prove it", [
-        "One-command netns lab, 5 arms: FIFO · fq_codel · static CAKE (SQM) · cake-autorate-style · VeriQ; ≥10 runs, 95% CIs, auto PDF report",
-        "8 scenarios: ISO during a call, 100 → 20 Mbps drop, 3 TVs + gaming, backup upload, chaos kill, IPv6…",
-        "Live physical kit: Raspberry Pi 5 router + red “WAN DROP” button + chaos button",
+        "Real, tuned baselines: FIFO · fq_codel · SQM-CAKE · cake-autorate v3.2 · VeriQ + ablations; ≥10 randomised runs, 95% CIs",
+        "9 scenarios: ISO during call, 100 → 20 Mbps drop, 3 TVs + gaming, remote-path delay, lying probe, crash, IPv6…",
+        "Physical Pi 5 kit: the judge picks the fault, VeriQ responds from telemetry alone",
         [("Targets: ", 10.5, True, GREEN),
-         ("real-time added delay p95 ≤ 10 ms · settle < 2 s after WAN drop · zero starvation · CPU measured on ARM", 10.5, True, INK)],
+         ("0 call freezes in S1 · added delay p95 ≤ 10 ms · settle < 2 s after WAN drop · measured progress for every class", 10.5, True, INK)],
     ], fill=RGBColor(0xEC, 0xF7, 0xF1), title_color=GREEN)
 
     footer(slide, [
-        ("Stack: ", "Linux tc (CAKE · HTB · fq_codel; DualPI2/L4S-ready) · eBPF (libbpf CO-RE) · Python/Go control plane · LightGBM + conformal · Prometheus/Grafana · React + three.js · Flent / irtt / iperf3 / Playwright"),
-        ("Industry path: ", "RDK-B / OpenWrt package · TR-181 data model + TR-369 USP for fleet control · EDT + eBPF + sch_fq for multi-gig PON · closed-loop home edge for intent-based network ops"),
+        ("Stack: ", "Linux tc (CAKE · HTB · fq_codel) · Python + pyroute2 control plane · LightGBM + conformal · Prometheus/Grafana · React + three.js · Playwright (WebRTC, dash.js) · iperf3 / irtt / Flent"),
+        ("Industry path (designed, not built): ", "RDK-B / OpenWrt package · TR-181 + TR-369 USP fleet management · research tracks: eBPF datapath, Wi-Fi airtime, L4S, multi-gig scaling"),
     ])
 
 
 CASES = {
-    3: (build_case3, "VeriQ: Experience-Verified, Intent-Aware QoS"),
+    3: (build_case3, "VeriQ: adapts, measures, explains"),
     4: (build_case4, "LabelTwin: Label-as-Code for medical device labeling"),
 }
 
