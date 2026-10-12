@@ -29,6 +29,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 NS_LAN=vq-lan NS_RTR=vq-rtr NS_ISP=vq-isp NS_SRV=vq-srv
 SRV4=10.10.3.2 SRV6=fd00:10:3::2
 V6=0
+NETEM_OK=0
 [ -d /proc/sys/net/ipv6 ] && V6=1  # dual-stack where the kernel has IPv6 enabled
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -78,8 +79,11 @@ isp_bottleneck() {
   nsx $NS_ISP tc qdisc replace dev isp-net root tbf rate "${UP_MBIT}mbit" \
     burst "$(burst_bytes "$up")" limit $(( up * ISP_BUF_MS / 1000 ))
   # base internet RTT, added on the server side
-  nsx $NS_SRV tc qdisc replace dev srv0 root netem delay "${BASE_RTT_MS}ms" limit 10000 \
-    || warn "netem unavailable: running without the ${BASE_RTT_MS} ms base RTT"
+  if nsx $NS_SRV tc qdisc replace dev srv0 root netem delay "${BASE_RTT_MS}ms" limit 10000; then
+    NETEM_OK=1
+  else
+    warn "netem unavailable: running without the ${BASE_RTT_MS} ms base RTT"
+  fi
 }
 
 setup() {
@@ -186,7 +190,10 @@ main() {
     done
   done
   {
-    echo "EMULATION: ISP bottleneck = tbf ${DOWN_MBIT}/${UP_MBIT} Mbit with a ${ISP_BUF_MS} ms FIFO; base RTT ${BASE_RTT_MS} ms (netem)"
+    echo "EMULATION: ISP bottleneck = tbf ${DOWN_MBIT}/${UP_MBIT} Mbit with a ${ISP_BUF_MS} ms FIFO"
+    if [ $NETEM_OK -eq 1 ]; then echo "base RTT: ${BASE_RTT_MS} ms (netem applied)"; else echo "base RTT: NOT applied (netem unavailable)"; fi
+    if [ $V6 -eq 1 ]; then echo "IPv6: enabled"; else echo "IPv6: unavailable in this kernel (IPv4 only)"; fi
+    echo "arms requested: ${ARMS[*]}"
     echo "kernel: $(uname -r)"
     echo "tc: $(tc -V)"
     echo "iperf3: $(iperf3 --version | head -1)"

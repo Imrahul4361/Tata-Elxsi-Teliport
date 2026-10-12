@@ -18,7 +18,7 @@ from reportlab.platypus import (KeepTogether, PageBreak, Paragraph, SimpleDocTem
 from reportlab.platypus.tableofcontents import TableOfContents
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, "docs", "VeriQ_Project_Description.pdf")
+OUT = os.path.join(ROOT, "docs", "VeriQ_Project_Description_v4.pdf")
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 pdfmetrics.registerFont(TTFont("DV", os.path.join(FONT_DIR, "DejaVuSans.ttf")))
 pdfmetrics.registerFont(TTFont("DV-B", os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")))
@@ -180,8 +180,8 @@ story += [Spacer(1, 1.1 * cm), Paragraph("VeriQ", W),
                     "for Mixed Home Broadband Traffic · Team &lt;Team Name&gt;, &lt;College&gt;", WS),
           Spacer(1, 4.3 * cm)]
 table([["Item", "Status (12 Oct 2026)"],
-       ["Design", "Frozen at v3.3 after three external review rounds; CAKE-based core locked"],
-       ["Measured so far", "Day-0 emulated lab only (Section 8.1). Every other number is a <b>target</b>, a published "
+       ["Design", "v4 (12 Oct 2026): v3.3 core locked + three refinements (action checker, mark plumbing, evidence-graded diagnosis). Change record: docs/10"],
+       ["Measured so far", "One preliminary Day-0 sandbox run (Section 8.1; raw files in evidence/). Every other number is a <b>target</b>, a published "
         "default or someone else's published result, and is labelled as such."],
        ["Next milestone", "First reproducible call-plus-bulk experiment: FIFO vs SQM-CAKE vs cake-autorate vs VeriQ"]],
       [3.4, 13.2])
@@ -210,13 +210,15 @@ bullets([
 ])
 p("<b>Why it is different.</b>")
 bullets([
-    "<b>Diagnosis before action.</b> A slow far-away server never triggers a wasteful speed cut.",
+    "<b>Diagnosis before action.</b> Designed so that a slow far-away server does not trigger a wasteful speed cut. Measured as the rate of unnecessary interventions (our primary research question).",
     "<b>Real user outcomes.</b> We count real WebRTC video freezes and DASH stalls, not just ping. IETF "
     "Quality-of-Outcome scores are computed offline.",
     "<b>Honest ML.</b> Apps' own NQB/L4S marks come first. The classifier is tested by flow and by time, with "
     "shortcut features removed, and abstains when unsure.",
-    "<b>Honest comparison.</b> Tested against the strongest open tools (tuned SQM-CAKE and cake-autorate), with "
-    "ablations, ≥ 10 randomised runs and 95% confidence intervals.",
+    "<b>Honest comparison (planned).</b> To be tested against tuned SQM-CAKE, cake-autorate and QoSmate with "
+    "autorate, plus ablations; run-level statistics with confidence intervals. Ties and losses will be reported.",
+    "<b>Auditable control.</b> A deterministic action checker admits or rejects every change before it reaches "
+    "the kernel, and every decision leaves a receipt.",
 ])
 p("<b>Value.</b> Households get smoother calls and games without buying hardware. Operators get fewer 'my "
   "internet is slow' support contacts and standards-aligned QoE telemetry (TR-471/RFC 9946 capacity tests, "
@@ -243,12 +245,12 @@ table([
     ["Pain point", "What actually happens", "Why naive fixes fail"],
     ["Bufferbloat", "TCP bulk flows fill oversized modem/ISP buffers; every call/game packet waits behind them",
      "Prioritising at the router does nothing if the router is not the bottleneck"],
-    ["Encrypted traffic", "Almost everything is QUIC/TLS on port 443; most apps don't set DSCP",
-     "Port and DPI rules are blind or invasive"],
+    ["Encrypted traffic", "Most traffic is QUIC/TLS on port 443; many apps don't set DSCP",
+     "Port rules lose precision and DPI is invasive; headers and timing still carry useful metadata, and fair queuing stays effective"],
     ["Moving capacity", "DOCSIS contention, 5G FWA radio, Wi-Fi interference change the real rate minute to minute",
      "A fixed shaper is either too high (bloat returns) or too low (wasted bandwidth)"],
     ["Uplink congestion", "Home uplinks are slow; backups and uploads cause the worst delay",
-     "Many tools shape only the download"],
+     "Download-only or fixed-rate setups miss it; mature tools (SQM, QoSmate) shape both directions"],
     ["Starvation risk", "Strict priority can stop downloads and updates completely", "Violates fairness"],
     ["No verification", "QoS is set and forgotten; nobody checks whether calls improved",
      "Ping graphs are not user experience"],
@@ -291,7 +293,7 @@ bullets([
     "closed-loop for operator networks. VeriQ applies the same philosophy at the home edge: intents in, "
     "verified outcomes out. This is a thematic fit; integration is not claimed.",
     "<b>Services model.</b> Tata Elxsi grows by attaching accelerators to engineering services. VeriQ is an "
-    "accelerator that operators can deploy on existing CPEs as software, not a new box.",
+    "accelerator that operators could deploy as software on Linux-based CPEs that meet its operating envelope (not every existing gateway).",
 ])
 
 # 4 Solution
@@ -309,10 +311,11 @@ bullets(["<b>Locate before acting.</b> No speed cut without evidence that the WA
          "number is recomputed from raw data."], "1")
 h2("4.2 What VeriQ adds beyond existing tools")
 table([["Typical approach", "VeriQ"],
-       ["Priority by port/DSCP", "App marks (NQB, L4S) first, if the flow behaves; else a calibrated classifier that abstains"],
-       ["Cut speed whenever delay rises (e.g. delay-based autorate)", "Corroborated fault localisation; remote/Wi-Fi problems never cause a WAN cut"],
+       ["Static port/DSCP rules (still common in stock routers)", "App marks (NQB, L4S) first, if the flow behaves; else a calibrated classifier that abstains"],
+       ["Delay-triggered rate cuts (cake-autorate, QoSmate autorate; both mature, with reflector handling)", "Evidence-graded diagnosis (E0–E3) with an action-permission table; designed to hold on remote/Wi-Fi problems (hypothesis, to be tested)"],
+       ["Unchecked rate changes", "Deterministic action checker + desired/observed-state reconciler"],
        ["Fixed shaper", "Capacity μ ± σ tracking; shaper = μ − kσ; standard UDPST test on idle lines"],
-       ["Strict priority", "Expiring, budgeted leases using CAKE preference; misbehaving flows sanctioned; progress measured"],
+       ["Strict priority", "Expiring, budgeted leases selecting CAKE tins via conntrack marks (both directions); eligibility violations sanctioned; progress measured"],
        ["Ping graphs", "Real WebRTC freezes and DASH stalls; offline IETF QoO scores with explicit coverage"],
        ["Set and forget", "Receipts: improved / degraded / inconclusive, with condition-aware undo"]], [6.6, 10.0])
 
@@ -378,10 +381,16 @@ bullets(["Core enforcement is CAKE (diffserv4, per-host fairness, overhead compe
          "usage levels. Per-device fairness and other traffic's progress are evaluated separately.</b> Thresholds "
          "are weight changes shared by a tin, not per-device caps or reservations.",
          "Admission: at most 2 active leases, one per device, time-limited: a <b>provisional</b> rule, not proof of fairness.",
-         "Precedence: <b>sanction &gt; lease &gt; user correction &gt; mark &gt; classifier</b>. A flow exceeding its "
-         "allowance or building a queue is sanctioned. It recovers after a penalty period (60 s, doubling on "
-         "repeats, capped at 15 min) of qualifying behaviour: within allowance every second, no queue-building "
-         "signature, at least 20 packets.",
+         "Mark plumbing: the controller writes a private conntrack mark; nftables (upload) and act_ctinfo + IFB "
+         "(download) turn it into the packet mark, and CAKE's <b>fwmark</b> option selects the tin. DSCP is not "
+         "rewritten by default; per-tin counters and packet captures verify the treatment.",
+         "Precedence: <b>operating state &gt; sanction &gt; lease &gt; user correction &gt; mark &gt; classifier &gt; default</b>. "
+         "A lease covers its device's flows, including UNKNOWN ones (explicit user authorization differs from "
+         "classifier abstention).",
+         "Sanctions apply only to <b>violations of preferential-tin eligibility</b> (a per-flow rate/queue envelope). "
+         "Ordinary bulk traffic in best effort is legitimate and never sanctioned. Recovery: a penalty period (60 s, "
+         "doubling, capped at 15 min) with <b>no observed violation</b>. Silence counts, so idle apps never have to "
+         "send traffic to recover.",
          "Hard guaranteed rates (HTB) and scheduler switching are post-core experiments."])
 h2("6.5 Receipts and Quality of Outcome")
 bullets(["Compare equal windows only within a stable regime; otherwise INCONCLUSIVE. Block bootstrap; minimum samples.",
@@ -440,21 +449,25 @@ table([["Role", "Owns"],
 
 # 8 Results & evaluation
 h1("8. Results to date and evaluation plan")
-h2("8.1 Results to date (measured, emulated)")
+h2("8.1 Preliminary result to date (one emulated sandbox run, not yet reproduced)")
 p("<b>Setup:</b> four Linux network namespaces (client, router, emulated ISP, server); 20 Mbps down / 5 Mbps up; "
-  "300 ms ISP FIFO; four TCP flows; sandbox kernel without CAKE, fq_codel, netem or IPv6. The script "
-  "<font face='DV'>lab/quickstart_bufferbloat.sh</font> is in the repository.")
+  "300 ms ISP FIFO; four TCP flows for 15 s; ping every 0.1 s under load; added delay = p95 RTT under load − idle "
+  "median RTT. Sandbox kernel without CAKE, fq_codel, netem or IPv6, so <b>no base RTT was applied</b> (an earlier "
+  "fingerprint wrongly said 20 ms; corrected). Script: <font face='DV'>lab/quickstart_bufferbloat.sh</font>; raw "
+  "files and fingerprint: <font face='DV'>evidence/day0_sandbox_2026-10-11/</font>.")
 table([["Router behaviour", "Download: added delay p95", "Upload: added delay p95", "Goodput down / up"],
        ["Stock FIFO", "63.6 ms", "266.1 ms", "19.1 / 4.7 Mbps"],
        ["Short-buffer shaper (95%)", "55.4 ms", "39.6 ms", "18.1 / 4.4 Mbps"],
        ["fq_codel, CAKE, VeriQ", "Next run on a full kernel", "", ""]], [5.0, 4.0, 4.0, 3.6])
 p("<b>Reading:</b> the uplink is the worst offender, and simply moving the queue into the router helps "
   "dramatically. A blunt short buffer barely helps the download direction, which motivates AQM (CAKE) and "
-  "VeriQ's adaptive control. These are single sandbox runs; the full plan below adds repetitions and CIs.")
+  "VeriQ's adaptive control. This is <b>one unreplicated run</b>. It counts as reproduced only after ≥ 10 runs per "
+  "arm on a full kernel with a regenerated fingerprint.")
 h2("8.2 Comparison arms and ablations")
 table([["Arm", "What it is", "Why"],
        ["FIFO", "Stock router, bloated modem", "The problem"], ["fq_codel (no shaper)", "Smart queue, wrong place", "Shows why shaping matters"],
-       ["SQM-CAKE (static, tuned)", "OpenWrt standard", "The common fix"], ["cake-autorate (tuned)", "Best open adaptive shaper", "Strongest rival"],
+       ["SQM-CAKE (static, tuned)", "OpenWrt standard", "The common fix"], ["cake-autorate (tuned)", "Mature open adaptive shaper", "Strong rival"],
+       ["QoSmate + autorate (commit pinned)", "Mature OpenWrt QoS (CAKE/HFSC/HTB, heuristics, UI)", "Strongest whole-system rival"],
        ["qosify-style rules + CAKE", "Heuristic classification", "Strongest rule-based classifier"], ["VeriQ", "Full system", ""]], [4.4, 6.0, 6.2])
 p("<b>Ablations:</b> without the classifier, without the localiser, without leases, without the fallback. "
   "These show what each part really adds, including where VeriQ does not beat tuned CAKE.")
@@ -478,8 +491,14 @@ table([["Case criterion", "VeriQ evidence"],
        ["Fairness and absence of starvation", "Per-class/host bytes per window; Jain index; sanction behaviour (S11)"],
        ["Adaptation speed and policy stability", "Settle time from injected events; changes per minute; oscillation; diagnosis latency"],
        ["CPU overhead, reproducibility, clarity", "CPU per core on Pi 5 / CPE; evidence ledger + manifests; claims check; receipts in plain English"]], [5.4, 11.2])
-h2("8.5 Statistics")
-p("≥ 10 runs per arm per scenario in randomised order; medians with block-bootstrap 95% confidence intervals; "
+h2("8.5 Primary research question")
+p("<b>Does diagnosis-informed, bounded adaptation reduce unnecessary rate cuts (cuts ≥ 5% when the evaluator's "
+  "ground truth shows no access-capacity change) while staying non-inferior in settle time after genuine drops "
+  "(+1 s margin vs cake-autorate) and in bulk progress (−10% margin)?</b> Faults are scheduled blind: the "
+  "controller never sees scenario names, true capacity or fault times. Two comparison types: controller-only "
+  "(same CAKE datapath) and whole-system (each tool as recommended). Two enforcers never run at once.")
+h2("8.6 Statistics")
+p("The experimental unit is a run, not a packet. A pilot (n = 5 per arm) sets the run count; order is counterbalanced with warm-up and reset; run-level medians with bootstrap 95% confidence intervals; "
   "Holm correction across comparisons. A tiered matrix starts small (4 arms × 3 scenarios × 10 runs = 120 runs). "
   "Every report carries an environment fingerprint and is generated only from the evidence ledger.")
 
@@ -498,7 +517,8 @@ table([["Assumption (illustrative)", "Value"],
        ["Monthly share contacting support about lag/'slow internet' (r)", "1.5%"],
        ["Cost per support contact (c)", "₹400"],
        ["Share of those contacts VeriQ prevents (p)", "15% (to be measured in a field trial)"],
-       ["<b>Annual saving = N × r × 12 × c × p</b>", "<b>≈ ₹1.08 crore per year</b>, before churn and upsell effects"]], [11.0, 5.6])
+       ["<b>Gross modelled avoided cost = N × r × 12 × c × p</b>", "<b>≈ ₹1.08 crore per year</b> (gross)"],
+       ["Net value", "Gross − integration − per-device validation/maintenance − support training (all unknown until a pilot)"]], [11.0, 5.6])
 box("How to present this", "Show the formula and let judges change the inputs. None of these numbers are "
     "measured; they illustrate how VeriQ's value would be quantified in an operator pilot.", "warn")
 h2("9.3 Scaling path (designed, not built)")
@@ -512,13 +532,16 @@ bullets(["<b>Per home:</b> software-only on CPE-class ARM CPUs; datapath in the 
 
 # 10 Safety & limits
 h1("10. Safety, privacy, guarantees and known limitations")
-h2("10.1 Properties claimed and tested")
+h2("10.1 Properties designed and to be tested")
 bullets(["Never inspects the payload of forwarded traffic; never promotes an uncertain or sanctioned flow.",
          "Never rewrites the DSCP it forwards and sets no ECN bits itself. CAKE may mark ECN-capable packets "
          "CE as its normal congestion signal.",
          "Leases always expire; sanctions override leases and corrections.",
          "Every applied configuration is versioned and read back; every decision is logged.",
-         "New installs start in shadow mode; a watchdog engages a SAFE shaper on failure.",
+         "New installs start in shadow mode; a separate watchdog engages a SAFE shaper on controller failure. SAFE "
+         "assumes capacity does not keep collapsing, so it is not universally safe.",
+         "The action checker guarantees <b>admissibility</b> (fresh data, valid version, rate and step limits, budgets, "
+         "lease validity), not optimality or user benefit.",
          "QoO is never reported as complete when a component is unknown."], "1")
 h2("10.2 Known limitations (stated before judges ask)")
 bullets(["Shaping below capacity costs a few percent of throughput.",
@@ -529,20 +552,25 @@ bullets(["Shaping below capacity costs a few percent of throughput.",
          "The uncertainty-fallback limits are starting hypotheses, not validated safety limits.",
          "QoO is an IETF draft and our requirement profiles are our own calibration.",
          "All lab links are emulated; physical-kit and real-line validation are planned.",
-         "CAKE is single-threaded; multi-gigabit CPEs need further work."])
+         "CAKE runs per-qdisc on one CPU in the kernels we target. Multi-queue CAKE support depends on the kernel "
+         "version and is not evidence of VeriQ scaling.",
+         "QoSmate is more mature as a product (UI, packaging, schedulers). VeriQ's advantages are hypotheses "
+         "until the comparison runs."])
 
 # 11 Demo & roadmap
 h1("11. Demonstration plan and roadmap")
 h2("11.1 Demonstration (planned)")
 bullets(["<b>Physical kit:</b> Raspberry Pi 5 running VeriQ, an emulated-ISP box with a red 'WAN DROP' button, and "
-         "a local Jitsi server. A judge chooses the fault; VeriQ responds from telemetry alone.",
+         "a Jitsi server <b>on the WAN side</b> with peer-to-peer disabled, so call media crosses the impaired link "
+         "(checked with interface counters). A judge chooses the fault: access drop, misleading remote delay, a "
+         "stale action (rejected by the checker), or a controller kill.",
          "<b>Split-screen video:</b> the same download on a stock router and on VeriQ, with live freeze counters.",
          "<b>3D replay:</b> a home model whose queues are drawn from recorded telemetry. Every element is tagged "
          "measured, estimated or illustrative, and the inferred ISP queue is shown beside lab ground truth.",
          "<b>Receipts on screen:</b> what VeriQ changed, why, and whether calls actually improved."])
 h2("11.2 Roadmap after the core")
 table([["Track", "Purpose"],
-       ["HTB guaranteed rates + scheduler switching", "Real minimum rates for leases (exact budget already specified)"],
+       ["HTB guaranteed rates + scheduler switching", "Real minimum rates for leases (a proposed, unvalidated contract)"],
        ["NQB lane (RFC 9956)", "Shallow, non-priority lane for smooth traffic, with traffic protection"],
        ["DualPI2 / L4S arm", "Compare with the industry's low-latency direction"],
        ["Header-only call-quality estimator (IMC 2023 method)", "Experience estimates in real homes without app access"],
