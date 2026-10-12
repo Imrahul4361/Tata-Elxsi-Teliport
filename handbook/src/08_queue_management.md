@@ -304,7 +304,7 @@ Assured rates are starting values: `A_rt` uses the same RT-budget formula as HFS
 
 | Situation | Recommended backend | Reason |
 |---|---|---|
-| Bench: CAKE ≥ 95% of target and CPU ≤ 85% | `cake` | Best feature set: host isolation, sparse-flow boost, ACK filter |
+| Bench: CAKE ≥ 95% of target and CPU ≤ 85% | `cake` | Richest feature set: host isolation, sparse-flow boost, ACK filter |
 | Competitive gamer, wants a strict realtime curve, CPU adequate | `hfsc` | `rt` curve serves game bursts at `m1` |
 | CAKE fails the bench, HFSC passes | `hfsc` | Lower per-packet cost than CAKE |
 | Both fail, or MIPS-class router | `htb`, or shape one direction only | Lowest per-packet cost |

@@ -593,7 +593,7 @@ result     candidate ruleset OK (nft -c); nothing written (--dry-run)
 
 ## How to explain classification to a judge
 
-> **For judges.** "Every connection carries a class and the reason for it in three bits of its conntrack mark, and the kernel enforces a seven-level precedence: state, sanction, lease, user rule, app mark, classifier, default. Preference always has an explicit basis, and every preferred flow passes a per-flow envelope that a misbehaving flow loses within about a second. The ML classifier is the weakest voice: it acts only on singleton conformal sets, and we report how often it acts and how often it is right, separately. We accept every QoSmate rule and can import a QoSmate configuration, reporting each place where VeriQ deliberately behaves differently."
+> **For judges.** "Every connection carries a class and the reason for it in three bits of its conntrack mark, and the kernel enforces a seven-level precedence: state, sanction, lease, user rule, app mark, classifier, default. Preference needs an explicit basis, and every preferred flow passes a per-flow envelope; our target is that a misbehaving flow loses its preference within 1 s. The ML classifier is the weakest voice: it acts only on singleton conformal sets, and we report how often it acts and how often it is right, separately. We accept every QoSmate rule and can import a QoSmate configuration, reporting each place where VeriQ deliberately behaves differently."
 
 ## Classification checklist
 
