@@ -1,5 +1,5 @@
-# 09 · VeriQ v4: Revised Specification
-*Baseline: `VeriQ_Project_Description.pdf` (design v3.3, 19 pp.). Change record: `docs/10_VeriQ_v4_Change_Record.md`. The original PDF is preserved, and the revised judge-facing PDF is `VeriQ_Project_Description_v4.pdf`. Prepared 12 Oct 2026.*
+# 09 · VeriQ v4.1: Revised Specification (authoritative)
+*This is the **single authoritative specification**. Appendix A holds the implementation contracts. Diagnosis evidence levels are **L0–L3**; estimator tests are **E1–E8**; evaluation stages are **Stage 1–4**. Baseline: `VeriQ_Project_Description.pdf` (design v3.3, 19 pp.). Change record: `docs/10_VeriQ_v4_Change_Record.md`. The original PDF is preserved, and the revised judge-facing PDF is `VeriQ_Project_Description_v4.pdf`. Prepared 12 Oct 2026.*
 
 **Inputs available for this revision:**
 - the official Case 3 brief;
@@ -14,7 +14,7 @@
 ## 1. Decision summary
 
 **Positioning (defensible today):** *VeriQ is a diagnosis-informed, bounded and auditable controller for CAKE-based home QoS.* Its central, testable claim is narrow:
-> "Compared with delay-triggered autorate controllers, VeriQ makes **fewer unnecessary rate cuts** when the problem is not the access link, while staying **non-inferior** in responding to genuine capacity drops and in bulk progress."
+> "Compared with delay-triggered autorate controllers, VeriQ makes **fewer and smaller inappropriate rate reductions** in disturbances the shaper cannot usefully control, while staying **non-inferior** in responding to genuine capacity drops and in bulk progress."
 
 Everything else (receipts, leases, classifier) supports that claim or serves the case's intent requirement.
 
@@ -30,7 +30,7 @@ Everything else (receipts, leases, classifier) supports that claim or serves the
 - the physical demo and 3D replay after the core works.
 
 **Three new core refinements (the maximum allowed):**
-1. **R1: a deterministic Action Checker and a desired/observed-state reconciler.** Every proposed action is checked for *admissibility* before it reaches the kernel.
+1. **R1: a deterministic Action Checker and a desired/observed-state reconciler.** Every proposed action is checked for admissibility against the implemented rules before it reaches the kernel.
 2. **R2: a mark-plumbing contract.**
    - Internal conntrack marks → CAKE `fwmark` tin selection in **both** directions.
    - Download is handled by IFB + `act_ctinfo`, an idea learned from QoSmate's ctinfo design and re-implemented here.
@@ -50,7 +50,7 @@ Everything else (receipts, leases, classifier) supports that claim or serves the
 | Day-0: FIFO added 266.1 ms (up) / 63.6 ms (down) p95; short-buffer shaper 39.6 / 55.4 ms | **Reported, not reproduced** | One sandbox run; **no base RTT** (netem absent); IPv4 only. Raw files and corrected fingerprint in `evidence/`. |
 | CAKE `fwmark MASK` can override tin selection from (conn)marks | Researched fact | Kernel commit 0b5c7efdfc6e; tc-cake man page |
 | Tin thresholds change a tin's scheduling weight above a usage level; they are not per-device caps or reservations | Researched fact | tc-cake(8) |
-| VeriQ reduces unnecessary cuts vs delay-triggered autorate | **Hypothesis (primary RQ)** | To be tested (§5) |
+| VeriQ reduces inappropriate interventions (count, cumulative magnitude, duration) vs delay-triggered autorate | **Hypothesis (primary RQ)** | To be tested (§5) |
 | VeriQ responds to genuine drops as fast as cake-autorate | **Hypothesis** | Non-inferiority margin defined in §5 |
 | S1–S13 targets (e.g. 0 freezes, settle < 2 s) | **Targets** | Not results |
 | Operator savings ≈ ₹1.08 crore/yr | **Illustrative model** | Gross modelled avoided cost only (§7) |
@@ -118,28 +118,28 @@ observe → classify → estimate → diagnose → propose → ACTION CHECKER �
 - The per-cycle delay signal is the **median of healthy reflectors' deltas**, with a quorum of ≥ 2 healthy reflectors.
 - No plain mean. QoSmate's autorate averages RTT across reflectors, so one slow reflector can move its signal; whether that matters in practice is a test hypothesis (§5), not a verdict.
 - Unreachable or rate-limited reflectors (ICMP) are marked unhealthy and rotated.
-- When the first hop is unavailable, the near signal is "missing", never zero.
+- When the first hop is unavailable, the near signal is "missing", never zero. The missing-near-probe rules are in Appendix A.7.
 
 **Diagnosis output:** `{OWN_QUEUE, WAN_LIKELY, REMOTE_LIKELY, WIFI_LIKELY, PROBE_FAULT, MIXED, UNKNOWN}`, with an **evidence level** and provenance (which signals, how old).
 
 | Evidence level | Definition | Example |
 |---|---|---|
-| E0 | No usable signal | All reflectors unhealthy |
-| E1 | One source | Reflector median rises |
-| E2 | Two **independent** sources (reflectors on the same path count as one source) | Reflector median rises **and** G drops below S with demand present, or the near hop rises with our queue empty |
-| E3 | E2 + an active capacity test agrees | UDPST to a cooperating server |
+| L0 | No usable signal | All reflectors unhealthy |
+| L1 | One source | Reflector median rises |
+| L2 | Two **independent** sources (reflectors on the same path count as one source) | Reflector median rises **and** G drops below S with demand present, or the near hop rises with our queue empty |
+| L3 | L2 + an active capacity test agrees | UDPST to a cooperating server |
 
 | Diagnosis × evidence | Permitted actions (the Action Checker enforces these) |
 |---|---|
-| WAN_LIKELY @ E2 | Fast cut ≤ ×0.75, then slow re-probe |
-| WAN_LIKELY @ E3 | Re-baseline S to the measured capacity minus margin |
-| REMOTE_LIKELY / WIFI_LIKELY @ ≥ E2 | Hold S; notify |
-| E0–E1, MIXED, UNKNOWN with bufferbloat present | **Bounded fallback only** |
+| WAN_LIKELY @ L2 | Fast cut ≤ ×0.75, then slow re-probe |
+| WAN_LIKELY @ L3 | Re-baseline S to the measured capacity minus margin |
+| REMOTE_LIKELY / WIFI_LIKELY @ ≥ L2 | Hold S; notify |
+| L0–L1, MIXED, UNKNOWN with bufferbloat present | **Bounded fallback only** |
 | PROBE_FAULT | Hold; rotate the reflector |
 
 **Bounded fallback.** Starting parameters, tested in S13:
 - steps ≤ 5% of the anchor rate;
-- **one global budget** of ≤ 10% per rolling 10 minutes. Episodes cannot overlap and all of them draw from the same budget, so there is no reset loophole;
+- **one global budget** of ≤ 10% per rolling 10 minutes. Episodes cannot overlap and all of them draw from the same budget. The 60 s gap between episodes is an **episode cooldown only**: it never resets or refunds the rolling cumulative-cut budget;
 - 10 s before/after windows;
 - a throughput guard;
 - undo that is aware of current conditions.
@@ -158,13 +158,15 @@ A kept step means *operational improvement observed*, **not** a causal conclusio
 4. **User correction** (authenticated, flow or app level). It changes the class label only, and cannot lift a sanction.
 5. **App mark** (DSCP/ECN). A treatment hint, not identity.
 6. **Classifier single-class prediction.** Abstention → best effort.
+
+> **Single rule, used everywhere:** *Classifier abstention alone never grants preference. A valid authenticated lease may grant preference to UNKNOWN traffic, subject to eligibility and operating-state checks.*
 7. **Default.** CAKE fairness and diffserv on the packet DSCP.
 
 **Admission.**
 - At most 2 active leases, one per device. This is provisional.
 - Expiry uses a monotonic clock; leases persist across controller restart with their remaining time.
 - Conflicting requests are merged or refused, with a reason.
-- **Under capacity collapse** (S < 2 Mbit/s or WAN_LIKELY @ E2 with a > 50% drop), leases continue but the controller warns the holder; no new leases are admitted until S recovers.
+- **Under capacity collapse** (S < 2 Mbit/s or WAN_LIKELY @ L2 with a > 50% drop), leases continue but the controller warns the holder; no new leases are admitted until S recovers.
 
 ### 3.5 R1: Action Checker and reconciler
 
@@ -176,7 +178,7 @@ A kept step means *operational improvement observed*, **not** a causal conclusio
 5. the lease is valid on the monotonic clock;
 6. the operating state permits the action.
 
-**Output:** `ACCEPT` or `REJECT(reason)`. Both are logged. The checker decides **admissibility, not optimality or user benefit**.
+**Output:** `ACCEPT` or `REJECT(reason)`. Both are logged. The checker **checks admissibility against the implemented rules**. It does not establish optimality or user benefit, and it guarantees nothing beyond the rules it actually implements and tests (Appendix A.1).
 
 **Reconciler:**
 - Every cycle it compares the **desired** state (a versioned document) with the **observed** state (`tc -j qdisc/filter show`, `nft -j list table veriq`).
@@ -231,11 +233,18 @@ Receipts describe **before/after association**. They name the possible confounde
 
 ## 5. Evaluation specification
 
-**Primary RQ:** Does diagnosis-informed, bounded adaptation reduce **unnecessary interventions**, while keeping effective response to genuine congestion and acceptable bulk progress?
+**Primary RQ:** Does diagnosis-informed, bounded adaptation reduce **inappropriate interventions**, while keeping effective response to genuine congestion and acceptable bulk progress?
 
-- **Primary outcome:** unnecessary rate cuts per scenario run. These are cuts ≥ 5% when the evaluator's ground truth shows **no access-capacity change**.
-- **Co-primary (non-inferiority):** settle time after genuine drops, with a margin of +1 s vs cake-autorate.
-- **Secondary:** bulk progress in 10 s windows, with a margin of −10%.
+- **Primary outcome (corrected in v4.1):** inappropriate interventions, measured **only in control-futile scenarios**.
+  - **Which scenarios:** controlled runs where the injected disturbance lies outside what the shaper can usefully control, and local congestion does not justify a cut. These are S6 (remote-path delay), S7 (lying reflector), S10 (Wi-Fi bottleneck) and a probe-path disturbance.
+  - **Precondition checked by the evaluator in every run:** access-link utilisation stays below 80% and the ISP-emulator queue stays under 5 ms. Without this, a constant-capacity link could still be genuinely congested, for example after a bulk upload starts, and a cut would be justified.
+  - Reported per run:
+    1. **count** of rate reductions of *any* size;
+    2. **cumulative magnitude** `∫ max(0, S_ref − S(t)) dt` in Mbit·s, where S_ref is the shaper rate just before the disturbance. This captures repeated small cuts.
+    3. **duration** with S < 0.95 · S_ref.
+  - Constant-capacity congestion scenarios (S1, S4) are **excluded** from this outcome. There, responding is correct, and response quality is measured instead.
+- **Co-primary (non-inferiority):** in genuine-drop scenarios (S2), settling **confirmation time** (Appendix A.6). Margin: VeriQ ≤ comparator + 1 s, where the comparator is tuned cake-autorate in the same runs.
+- **Secondary (non-inferiority):** bulk progress = the bulk flows' share of leftover bandwidth over the run. Margin: **absolute −5 percentage points** vs tuned cake-autorate in the same scenario. The earlier "−10%" (relative) was looser and is withdrawn. The v3.4 text referenced in review is not in this repository; 5 pp absolute is adopted as the stricter reading.
 - Outcomes and margins are fixed **before** the final runs.
 
 **Topology.** netns (and later the physical kit): clients → router (system under test) → ISP emulator (tbf FIFO + netem) → servers. For each run, verify:
@@ -257,10 +266,10 @@ FIFO only illustrates the problem. There are two comparison types:
 Two enforcers never run at once.
 
 **Ladder:**
-1. **L1 · capability and smoke.** `veriq doctor` checks modules, offloads, the media path and counters; one smoke run; no statistics.
-2. **L2 · core repeated comparisons.** Call + bulk; a genuine drop (S2); a remote-delay or reflector disturbance (S6/S7).
-3. **L3 · blind faults, mixed conditions, recovery.** Includes a rejected stale action and a controller kill, plus targeted ablations (diagnosis off, classifier off, leases off, fallback off).
-4. **L4 · hardware and resources.** Pi 5 / ARM OpenWrt CPU and memory, plus a 2–4 h soak.
+1. **Stage 1 · capability and smoke.** `veriq doctor` checks modules, offloads, the media path and counters; one smoke run; no statistics.
+2. **Stage 2 · core repeated comparisons.** Call + bulk; a genuine drop (S2); a remote-delay or reflector disturbance (S6/S7).
+3. **Stage 3 · blind faults, mixed conditions, recovery.** Includes a rejected stale action and a controller kill, plus targeted ablations (diagnosis off, classifier off, leases off, fallback off).
+4. **Stage 4 · hardware and resources.** Pi 5 / ARM OpenWrt CPU and memory, plus a 2–4 h soak.
 
 **Statistics:**
 - The **experimental unit is a run**, not a packet.
@@ -280,9 +289,9 @@ Two enforcers never run at once.
 | WebRTC audio | concealedSamples ratio |
 | DASH | stalls and stall time |
 | Network | goodput; added delay p50/p95/p99 (with sample floors); jitter; loss |
-| Adaptation time | From the injected event to S within 10% of its final value |
+| Settling onset / confirmation | Onset: first controller rate change after the injected event. Confirmation: S stays within ±10% of its final value for 5 s (Appendix A.6). |
 | Oscillation | Direction reversals per minute |
-| Unnecessary interventions | Cuts ≥ 5% when ground truth shows no access-capacity change |
+| Inappropriate interventions | In control-futile scenarios only: count of reductions (any size), cumulative magnitude (Mbit·s), and duration below 0.95·S_ref |
 | Missed interventions | A genuine drop with no cut within 5 s |
 | Recovery time | Time to return to normal after the fault clears |
 | Resources | Per-core CPU and memory |
@@ -299,13 +308,14 @@ Two enforcers never run at once.
 | # | Item | Depends on | Core? | Effort (assumption) | Acceptance criterion |
 |---|---|---|---|---|---|
 | 1 | **Vertical slice V1:** netns lab + scenario runner + 1 WebRTC call (Jitsi, **JVB on WAN side, p2p disabled**) + DASH + bulk + evidence ledger | — | ✔ | 2 weeks | First reproducible call-plus-bulk run, media verified to cross the bottleneck |
-| 2 | Baselines: SQM-CAKE, cake-autorate, QoSmate (+autorate) installers | 1 | ✔ | 1 week | Each passes L1; config archived |
+| 2 | Baselines: SQM-CAKE, cake-autorate, QoSmate (+autorate) installers | 1 | ✔ | 1 week | Each passes Stage 1; config archived |
 | 3 | R2 mark plumbing + per-tin verification | 1 | ✔ | 4 days | Counters/pcap match intent in S1 |
-| 4 | Estimator + R3 diagnosis + reflector health | 1 | ✔ | 1.5 weeks | E1–E8 table; diagnosis confusion matrix |
+| 3b | **R1 Action Checker** (rules A.1) + its unit tests | 3 | ✔ | 4 days | All A.1 refusal tests pass; no action reaches the enforcer without an ACCEPT |
+| 4 | Estimator + R3 diagnosis + reflector health | 1 | ✔ | 1.5 weeks | E1–E8 estimator table; diagnosis confusion matrix |
 | 5 | R1 Action Checker + reconciler + watchdog + SAFE | 3 | ✔ | 1 week | Stale/duplicate/foreign-change tests pass; time-to-safe measured |
 | 6 | Leases + sanctions + classifier (honesty kit) | 3 | ✔ | 1.5 weeks | S5/S11 pass; classifier report |
 | 7 | Receipts + offline QoO + Grafana | 4–6 | ✔ | 1 week | Receipts reproduce from the ledger |
-| 8 | L2–L4 evaluation, claims check, report | all | ✔ | 1.5 weeks | Every published number regenerates |
+| 8 | Stage 2–4 evaluation, claims check, report | all | ✔ | 1.5 weeks | Every published number regenerates |
 | 9 | 3D replay; physical kit | 7 | Demo | 1–2 weeks | Replays real event streams, tagged |
 | Post-core, ranked | HTB guarantees → NQB lane → DualPI2 arm → header-only call estimator → live QoO → eBPF observer → per-device limits → chat intake | — | ✗ | — | Each needs its own hypothesis and experiment |
 
@@ -383,3 +393,121 @@ CAKE runs per-qdisc on one CPU in the kernels we target. Any multi-queue CAKE su
 | **Open gaps** | No controller code yet; no full-kernel run; `act_ctinfo` cpmark syntax to verify on the target iproute2; QoSmate not yet run as a baseline |
 
 **Decision: BUILD.** The design is coherent, and further changes should come from measurements. The first deliverable is vertical slice V1 (backlog #1). No new architecture version should be produced before V1 runs.
+
+---
+
+## Appendix A · Implementation contracts (authoritative)
+*Every number below is a **starting parameter** to be tuned in Stage 2 and recorded in the run manifest. None is a validated safety limit.*
+
+### A.1 Action Checker (R1): between the Policy Engine and the Enforcer
+**Position.** `Guardrails/Policy (M4) → proposed action → ACTION CHECKER → Enforcer (M5)`. The Enforcer refuses any command without an ACCEPT token for the same `action_id` and config version.
+
+**Inputs:**
+- the proposed action (type, target, `action_id`);
+- the observation snapshot (each signal with its timestamp);
+- the desired-state version and the last read-back kernel version;
+- the budget state (fallback, retry);
+- the lease table;
+- the sanction table;
+- the operating state.
+
+**Output:** `ACCEPT(action_id, version)` or `REJECT(action_id, code, reason)`. Both go to the decision log and the receipt.
+
+| Action | Rules checked (all must pass) | Refusal codes |
+|---|---|---|
+| any | snapshot age ≤ 2 cycles; desired version = read-back version; state ∈ {LIVE} (SHADOW → logged, not applied); `action_id` not seen before | `STALE_OBS`, `VERSION_MISMATCH`, `STATE_FORBIDS`, `DUPLICATE` |
+| RATE_CUT | step allowed by the diagnosis level (A.7); new S ≥ floor S_min (A.2) | `STEP_EXCEEDS_LEVEL`, `BELOW_FLOOR` |
+| RATE_RAISE | exploration preconditions (A.4); step ≤ ×1.04; new S ≤ S_max | `EXPLORE_PRECOND`, `ABOVE_MAX` |
+| FALLBACK_STEP | no overlapping episode; rolling-budget remainder ≥ step; episode cooldown elapsed | `EPISODE_ACTIVE`, `BUDGET_EXHAUSTED`, `COOLDOWN` |
+| LEASE_GRANT | token valid; ≤ 2 active, ≤ 1 per device; not in capacity collapse | `AUTH`, `ADMISSION`, `COLLAPSE` |
+| MARK_SET | tin ∈ 1..4; flow not sanctioned; the preference source is a lease, a user correction, an eligible app mark or a single-class prediction (**never abstention alone**) | `TIN_RANGE`, `SANCTIONED`, `NO_PREFERENCE_BASIS` |
+| SAFE / REVERT_TO_RECHECKED | always admissible; still logged | — |
+
+**Tests** (Stage 1 unit and fault tests; one test per refusal code):
+- stale snapshot;
+- version mismatch after a foreign `tc` change;
+- step too large for L1;
+- S below the floor;
+- exhausted budget across two episodes (the cooldown must not refund the budget);
+- expired lease;
+- an abstained flow requesting preference without a lease;
+- an action sent while in SHADOW;
+- a duplicate `action_id`.
+
+**Claim limit.** The checker checks admissibility against the implemented rules only.
+
+### A.2 Rate envelope and floor
+- Per direction: `S_min ≤ S ≤ S_max`, with `S_base` = the configured nominal rate.
+- **S_min = max(1 Mbit/s, 0.10 · S_base)**. For a 100 Mbit/s plan that is 10 Mbit/s. That sits below the 20 Mbit/s target of the 100 → 20 scenario, so S2 can settle around 0.9 × 20 Mbit/s.
+  - Rule: `S_min ≤ 0.8 ×` the lowest capacity in the scenario set, checked at configuration time.
+  - A floor of 25% of base, as in some tools' defaults, would be 25 Mbit/s and could **not** follow a drop to 20 Mbit/s.
+- `S_max = 1.05 · S_base`.
+
+### A.3 Capacity estimate vs gateway throughput vs receiver goodput
+| Quantity | Where measured | Use |
+|---|---|---|
+| G_gw: gateway throughput | CAKE dequeued bytes (`tc -s`), including headers; overhead-compensated to the wire | Estimator input |
+| Receiver goodput | Application payload at the endpoints (iperf3, harness) | **Evaluation only**; lower than G_gw (headers, retransmissions) |
+| μ, σ | EWMA of G_gw samples taken while shaper-limited or queue-building (censored samples flagged) | Tracking estimate, not a calibrated CI |
+
+The estimator never treats an application-limited G_gw as capacity (§3.3).
+
+### A.4 Upward-exploration lifecycle
+States: `HOLD → PROBE_UP → (BACKOFF) → HOLD`, plus `DRIFT` when idle.
+
+- **Enter PROBE_UP** only when all hold:
+  - load ≥ 75% of S for ≥ 2 s;
+  - reflector-median delta < 5 ms;
+  - no active fallback episode;
+  - no diagnosis at ≥ L1 in the last 10 s.
+- **In PROBE_UP:** raise ×1.04 per step with a 1 s refractory period, up to S_max.
+- **BACKOFF:** if the delta rises above 10 ms during PROBE_UP, return to the last good S × 0.97, then HOLD for 30 s.
+- **DRIFT (idle/stale):** if there is no confirming evidence for 120 s, move toward S_base by ≤ 1% per 10 s. σ widens while drifting.
+
+### A.5 Configuration ownership and versions
+- **What VeriQ owns:** its nft table `veriq`, qdiscs with handles in a reserved range, and the IFB `ifb-veriq`. Each owned object records the config version in a comment or a state file.
+- **Readback:** compares the hash of owned objects with the desired version.
+- **Foreign objects:** never modified. Their presence on the shaped interfaces sends VeriQ to DEGRADED.
+- **Disable/cleanup:** removes owned objects only.
+- **Version numbers:** a monotonic integer, persisted across restarts.
+
+### A.6 Settling onset vs confirmation
+For an injected event at t₀:
+- **onset** = the first controller rate change after t₀;
+- **confirmation** = the earliest time t₁ after which S stays within ±10% of its final value for 5 s.
+
+Both are reported. The co-primary outcome uses confirmation time.
+
+### A.7 Diagnosis evidence levels, near-probe absence, cooldown
+- **L0–L3** as defined in §3.3. Correlated sources count once (all reflectors behind the same access link = one source).
+- **Allowed cut per level:**
+
+  | Level | Allowed action |
+  |---|---|
+  | L2 WAN_LIKELY | ×0.75 |
+  | L3 | Re-baseline to the measured capacity minus margin |
+  | L0–L1 / MIXED / UNKNOWN | Bounded fallback only (≤ 5% per step) |
+
+- **Near probe missing** (first hop unreachable, ICMP rate-limited, or a route change):
+  - the near signal is MISSING;
+  - REMOTE_LIKELY cannot exceed **L1**, because near-vs-far discrimination is impossible;
+  - WAN_LIKELY may still reach **L2** only from two other independent sources: the far-reflector median **plus** throughput censoring (G_gw below S with demand present, own queue empty), or an L3 capacity test;
+  - otherwise bounded fallback applies.
+- **Episode cooldown (60 s):** it delays the next episode only. The **rolling 10-minute cumulative-cut budget** (≤ 10% of the anchor) is never reset or refunded by cooldowns, new episodes or restarts (the budget state is persisted).
+
+### A.8 First-packet and default mark handling
+- A new connection has ct mark 0, so there is no `fwmark` tin. CAKE then applies its normal diffserv4 classification on the packet DSCP (usually Best Effort).
+- **Leases:** a device with an active lease gets its mark from the **first packet**, because an nft rule matches the device address and the lease is known in advance.
+- **Classified flows:** the mark is set after k packets (5/10/20/30). Marks never apply retroactively.
+- **Sanctioned flows:** the mark is cleared to Best Effort.
+- **External DSCP:** untouched unless `wash` is configured.
+
+### A.9 Selection rate vs conformal coverage
+| Metric | Meaning |
+|---|---|
+| Coverage | Fraction of prediction sets containing the true label. Target 1 − α = 0.95 on exchangeable held-out data; drift breaks it. |
+| Selection rate | Fraction of flows with a singleton set, i.e. the flows VeriQ may act on |
+| Selective accuracy | Accuracy among selected flows |
+| Abstention rate | 1 − selection rate (also counts empty sets) |
+
+All four are reported, per class and under time/app shift. A low selection rate is acceptable because abstention defaults to best effort. High coverage does **not** imply high selective accuracy.

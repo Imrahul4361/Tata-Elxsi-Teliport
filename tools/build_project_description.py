@@ -125,10 +125,12 @@ def architecture_drawing():
     d.add(Rect(90, 140, 378, 120, rx=6, ry=6, fillColor=colors.HexColor("#EEF5FC"), strokeColor=BLUE))
     label(d, 96, 249, "VeriQ controller (Linux, CPE-class CPU)", 7.5, BLUE, True)
     mods = [("M1 Observe", "headers+timing"), ("M2 Classify", "marks first"), ("M3 Capacity", "μ±σ, UDPST"),
-            ("M3 Localise", "corroborated"), ("M4 Guardrails", "μ−kσ, fallback"), ("M5 Enforce", "CAKE, leases"),
-            ("M6 Receipts", "+ offline QoO"), ("M7 Leases", "budget, sanctions"), ("Safety", "shadow, watchdog")]
+            ("M3 Localise", "levels L0–L3"), ("M4 Policy", "μ−kσ, fallback"),
+            ("Checker (R1)", "admit / refuse"), ("M5 Enforce", "CAKE, ct mark"), ("M6 Receipts", "+ offline QoO"), ("M7 Leases", "budget, sanctions"),
+            ("Safety", "shadow, watchdog")]
     for i, (t, s) in enumerate(mods):
-        rbox(d, 98 + (i % 5) * 73, 205 - (i // 5) * 50, 68, 34, t, s, fill=NAVY if t.startswith("M6") else BLUE, size=7.3)
+        rbox(d, 98 + (i % 5) * 73, 205 - (i // 5) * 50, 68, 34, t, s, fill=NAVY if t.startswith("Checker") else BLUE, size=7.3)
+    label(d, 96, 146, "Path: M4 Policy → Checker (R1) → M5 Enforce; nothing reaches the kernel without an ACCEPT", 6.8, NAVY)
     arrow_down(d, 280, 140, 128)
     rbox(d, 180, 100, 200, 24, "Access link: modem / OLT / 5G FWA", "inferred queue · capacity varies", fill=RED, size=7.5)
     rbox(d, 95, 58, 170, 26, "Evidence ledger + Prometheus", "raw runs · manifests · decisions", fill=GREEN, size=7.3)
@@ -142,11 +144,11 @@ def architecture_drawing():
 
 def loop_drawing():
     d = Drawing(470, 70)
-    steps = ["Observe", "Classify", "Estimate", "Localise", "Decide", "Enforce", "Assess", "Log/Show"]
+    steps = ["Observe", "Classify", "Estimate", "Localise", "Decide", "Check", "Enforce", "Assess", "Log/Show"]
     for i, t in enumerate(steps):
-        rbox(d, i * 59, 30, 52, 28, t, fill=NAVY if t == "Localise" else BLUE, size=7.4)
+        rbox(d, i * 52, 30, 46, 28, t, fill=NAVY if t in ("Localise", "Check") else BLUE, size=7.0)
         if i < len(steps) - 1:
-            arrow_right(d, i * 59 + 52, 44, i * 59 + 59)
+            arrow_right(d, i * 52 + 46, 44, i * 52 + 52)
     label(d, 0, 10, "Fast guardrails act every 0.1–1 s · receipts every 15–60 s · causal claims only from repeated lab experiments", 7.6)
     return d
 
@@ -180,7 +182,7 @@ story += [Spacer(1, 1.1 * cm), Paragraph("VeriQ", W),
                     "for Mixed Home Broadband Traffic · Team &lt;Team Name&gt;, &lt;College&gt;", WS),
           Spacer(1, 4.3 * cm)]
 table([["Item", "Status (12 Oct 2026)"],
-       ["Design", "v4 (12 Oct 2026): v3.3 core locked + three refinements (action checker, mark plumbing, evidence-graded diagnosis). Change record: docs/10"],
+       ["Design", "v4.1 (12 Oct 2026): v3.3 core locked + three refinements (action checker, mark plumbing, evidence-graded diagnosis). Authoritative spec: docs/09 (Appendix A = contracts); change record: docs/10"],
        ["Measured so far", "One preliminary Day-0 sandbox run (Section 8.1; raw files in evidence/). Every other number is a <b>target</b>, a published "
         "default or someone else's published result, and is labelled as such."],
        ["Next milestone", "First reproducible call-plus-bulk experiment: FIFO vs SQM-CAKE vs cake-autorate vs VeriQ"]],
@@ -205,8 +207,7 @@ bullets([
     "It <b>finds the cause</b> before acting: a WAN drop, a remote server, Wi-Fi or a bad measurement.",
     "It honours time-limited user intents ('protect my work call for 45 minutes').",
     "It writes an evidence-backed <b>receipt</b> for every change: improved, degraded or inconclusive.",
-    "It never reads content, never promotes a flow it is unsure about, and starts in a shadow mode that only "
-    "records what it would do.",
+    "It never reads content, and it starts in a shadow mode that only records what it would do. " + "Classifier abstention alone never grants preference. A valid authenticated lease may grant preference to UNKNOWN traffic, subject to eligibility and operating-state checks.",
 ])
 p("<b>Why it is different.</b>")
 bullets([
@@ -303,7 +304,7 @@ bullets(["<b>Locate before acting.</b> No speed cut without evidence that the WA
          "reversible steps when evidence is unclear.",
          "<b>Deterministic safety, statistical explanation.</b> Fast guardrails keep delay bounded; slower "
          "receipts explain outcomes; only repeated lab experiments support causal claims.",
-         "<b>Privacy by construction.</b> Headers and timing only; app marks first; never promote an uncertain flow.",
+         "<b>Privacy by construction.</b> Headers and timing only; app marks first. Classifier abstention alone never grants preference. A valid authenticated lease may grant preference to UNKNOWN traffic, subject to eligibility and operating-state checks.",
          "<b>Honest semantics.</b> Leases select preferential CAKE treatment. They are not caps or guarantees. "
          "Fairness is measured.",
          "<b>Safe rollout.</b> Shadow mode first, one log row per decision, watchdog to a SAFE shaper.",
@@ -312,7 +313,7 @@ bullets(["<b>Locate before acting.</b> No speed cut without evidence that the WA
 h2("4.2 What VeriQ adds beyond existing tools")
 table([["Typical approach", "VeriQ"],
        ["Static port/DSCP rules (still common in stock routers)", "App marks (NQB, L4S) first, if the flow behaves; else a calibrated classifier that abstains"],
-       ["Delay-triggered rate cuts (cake-autorate, QoSmate autorate; both mature, with reflector handling)", "Evidence-graded diagnosis (E0–E3) with an action-permission table; designed to hold on remote/Wi-Fi problems (hypothesis, to be tested)"],
+       ["Delay-triggered rate cuts (cake-autorate, QoSmate autorate; both mature, with reflector handling)", "Evidence-graded diagnosis (levels L0–L3) with an action-permission table; designed to hold on remote/Wi-Fi problems (hypothesis, to be tested)"],
        ["Unchecked rate changes", "Deterministic action checker + desired/observed-state reconciler"],
        ["Fixed shaper", "Capacity μ ± σ tracking; shaper = μ − kσ; standard UDPST test on idle lines"],
        ["Strict priority", "Expiring, budgeted leases selecting CAKE tins via conntrack marks (both directions); eligibility violations sanctioned; progress measured"],
@@ -331,12 +332,15 @@ table([
     ["M1 Observer", "Packets (v4/v6) → per-flow size/timing/direction records, DSCP/ECN marks; never payload",
      "Buffer overflow → oldest flows evicted, counted", "Zero drops attributable to observer; measured CPU"],
     ["M2 Classifier", "Flow features → class + conformal set; marks first",
-     "Uncertain → UNKNOWN (best effort, never promoted)", "Coverage, selective accuracy, abstention, macro-F1 under shift"],
+     "Uncertain → UNKNOWN (abstention alone never grants preference; a valid lease may)", "Coverage, selective accuracy, abstention, macro-F1 under shift"],
     ["M3 Capacity + localiser", "qdisc stats, near/far probes, throughput, UDPST → μ ± σ + diagnosis + confidence",
      "Bad reflector down-weighted; contradiction → UNCERTAIN", "E1–E8 estimator tests; diagnosis confusion matrix"],
-    ["M4 Guardrails", "Estimate, diagnosis, leases → target policy",
+    ["M4 Policy / guardrails", "Estimate, diagnosis, leases → proposed action",
      "Invariant violation → SAFE; uncertainty → bounded fallback", "Settle time, no oscillation, steady-state utilisation"],
-    ["M5 Enforcer", "Policy → CAKE config (ordered, versioned, read back)", "Mismatch → compensate; repeated failure → DEGRADED",
+    ["Action Checker (R1)", "Proposed action + timestamped snapshot + versions + budgets + leases + state → ACCEPT or "
+     "REJECT(code)", "Refuses: stale data, version mismatch, step above level, below floor, budget exhausted, "
+     "invalid lease, abstention-only preference, wrong state, duplicate", "One unit/fault test per refusal code passes"],
+    ["M5 Enforcer", "ACCEPTed action → CAKE config + ct-mark rules (ordered, versioned, read back)", "Mismatch → compensate; repeated failure → DEGRADED",
      "Applied state equals intended state"],
     ["M6 Receipts", "Before/after windows → improved / degraded / inconclusive (+ offline QoO)",
      "Regime change → INCONCLUSIVE", "Receipt matches lab ground truth"],
@@ -356,13 +360,16 @@ p("Near-hop and far-reflector probes are overlapping observations: a far round t
 table([["Observation", "Interpretation", "Action"],
        ["Own queue grows, external delay flat", "Gateway is the bottleneck (intended)", "None; CAKE manages it"],
        ["Own queue empty; near and far delay rise", "Evidence consistent with a WAN capacity drop",
-        "Confident (≥ 2 corroborating signals) → fast cut; else bounded fallback"],
+        "L2 (two independent sources) → fast cut ≤ ×0.75; L0–L1 → bounded fallback only"],
        ["Only far delay rises", "Evidence consistent with a remote-path problem", "Hold the shaper"],
        ["Client-side delay / Wi-Fi retries rise, WAN normal", "Wi-Fi problem", "Leave WAN shaper; warn"],
        ["One reflector disagrees", "Bad measurement", "Down-weight and rotate it out"],
        ["Contradictory evidence", "Uncertain", "Hold or bounded fallback; alert on repetition"]], [5.0, 5.4, 6.2])
-p("<b>Corroborating signals:</b> persistence across ≥ 2 healthy reflectors (≥ 3 of 6 samples), throughput below "
-  "the shaper with demand present, a capacity change-point, or an agreeing short UDPST test.")
+p("<b>Evidence levels:</b> L0 no usable signal; L1 one source; L2 two independent sources (all reflectors behind "
+  "the same access link count as one; e.g. reflector median + throughput censoring with an empty own queue); L3 = L2 "
+  "+ an agreeing capacity test (UDPST, cooperating server). If the near probe is missing, REMOTE cannot exceed L1, and "
+  "WAN reaches L2 only via the far median + throughput censoring. Estimator accuracy tests are named E1–E8 "
+  "(a different thing). Full rules: docs/09 Appendix A.7.")
 h2("6.2 Capacity tracking")
 bullets(["Fast detector initialised from cake-autorate's published defaults (e.g. 3 of 6 samples over a delay "
          "threshold; ×0.75 maximum cut; ×1.04 maximum raise; refractory periods), then tuned in the lab.",
@@ -400,7 +407,8 @@ bullets(["Compare equal windows only within a stable regime; otherwise INCONCLUS
          "throughput judged only with demand evidence, otherwise <b>unknown</b>, and the score is withheld or shown as partial."])
 h2("6.6 Uncertainty fallback (a hypothesis under test)")
 p("When delay rises but the cause is unclear, VeriQ takes small reversible steps. Starting parameters: ≤ 5% per "
-  "step, ≤ 10% cumulative per rolling 10 minutes, 10 s before/after windows, a 60 s reset between episodes, and a "
+  "step, ≤ 10% cumulative per rolling 10 minutes (never refunded), 10 s before/after windows, a 60 s cooldown "
+  "between episodes (it delays the next episode but does <b>not</b> reset the cumulative budget), and a "
   "throughput guard. A step is kept only if near-probe delay improves with no concurrent change. A queue moving "
   "into the router is recorded as <b>supporting</b> evidence, not proof. NOT IMPROVED or INCONCLUSIVE steps are "
   "undone after re-checking current conditions. Scenario S13 evaluates whether these parameters are safe.")
@@ -418,15 +426,16 @@ bullets(["Read qdisc statistics, probe deltas, throughput and new flow records."
          "Update classes (marks first, then classifier; apply sanctions).",
          "Update capacity μ ± σ; run the fast detector.",
          "Localise: own queue / WAN / remote / Wi-Fi / bad probe, with confidence and corroboration.",
-         "Decide within guardrails: hold, fast cut, slow raise, bounded fallback step, or lease change.",
-         "Apply (or, in shadow mode, only record) via ordered, versioned, read-back netlink updates.",
+         "Propose within guardrails: hold, fast cut, slow raise, bounded fallback step, mark or lease change.",
+         "<b>Check:</b> the action checker admits or refuses the proposal; refusals are logged with a code.",
+         "Apply only ACCEPTed actions (in shadow mode, only record) via ordered, versioned, read-back updates.",
          "Open or close a receipt window; record outcome and evidence.",
          "Write the decision log row; export metrics to the ledger, Grafana and the 3D replay."], "1")
 h2("7.2 Build plan (harness first)")
 table([["Milestone", "Scope", "Exit criterion"],
        ["M-A · 25 Oct – 13 Nov", "netns lab, scenario runner, <b>minimal WebRTC call + DASH player + bulk traffic</b>, "
         "evidence ledger, baselines (SQM-CAKE, cake-autorate)", "First reproducible call-plus-bulk experiment, 10 runs"],
-       ["M-B · 14–20 Nov", "Observer (marks), classifier + honesty kit, capacity estimator, fault localiser",
+       ["M-B · 14–20 Nov", "Observer (marks), classifier + honesty kit, capacity estimator, fault localiser, <b>action checker + refusal tests</b>",
         "E1–E8 estimator table; diagnosis confusion matrix (S2, S6, S7, S10)"],
        ["M-C · 21–27 Nov", "Guardrails, CAKE enforcer, leases + sanctions, shadow mode, receipts, offline QoO",
         "S1–S5 run end to end in shadow then live"],
@@ -492,9 +501,15 @@ table([["Case criterion", "VeriQ evidence"],
        ["Adaptation speed and policy stability", "Settle time from injected events; changes per minute; oscillation; diagnosis latency"],
        ["CPU overhead, reproducibility, clarity", "CPU per core on Pi 5 / CPE; evidence ledger + manifests; claims check; receipts in plain English"]], [5.4, 11.2])
 h2("8.5 Primary research question")
-p("<b>Does diagnosis-informed, bounded adaptation reduce unnecessary rate cuts (cuts ≥ 5% when the evaluator's "
-  "ground truth shows no access-capacity change) while staying non-inferior in settle time after genuine drops "
-  "(+1 s margin vs cake-autorate) and in bulk progress (−10% margin)?</b> Faults are scheduled blind: the "
+p("<b>Does diagnosis-informed, bounded adaptation reduce inappropriate interventions while staying non-inferior "
+  "on genuine drops and bulk progress?</b> The primary outcome is measured only in <b>control-futile</b> scenarios: "
+  "remote-path delay, a lying reflector, a Wi-Fi bottleneck, and a probe-path disturbance. These are injected "
+  "outside what the shaper can usefully control, and the evaluator confirms no local congestion (access "
+  "utilisation &lt; 80%, ISP queue &lt; 5 ms). Per run we report the <b>count</b> of reductions of any size, their "
+  "<b>cumulative magnitude</b> ∫ max(0, S_ref − S(t)) dt in Mbit·s, and the <b>duration</b> below 0.95·S_ref. "
+  "Constant-capacity congestion (e.g. a bulk upload starting) is excluded, because cutting there is correct. "
+  "Non-inferiority vs tuned cake-autorate: settling confirmation time ≤ +1 s in genuine drops; bulk share of "
+  "leftover bandwidth ≥ comparator − 5 percentage points (absolute). Faults are scheduled blind: the "
   "controller never sees scenario names, true capacity or fault times. Two comparison types: controller-only "
   "(same CAKE datapath) and whole-system (each tool as recommended). Two enforcers never run at once.")
 h2("8.6 Statistics")
@@ -533,15 +548,16 @@ bullets(["<b>Per home:</b> software-only on CPE-class ARM CPUs; datapath in the 
 # 10 Safety & limits
 h1("10. Safety, privacy, guarantees and known limitations")
 h2("10.1 Properties designed and to be tested")
-bullets(["Never inspects the payload of forwarded traffic; never promotes an uncertain or sanctioned flow.",
+bullets(["Never inspects the payload of forwarded traffic. Classifier abstention alone never grants preference. A valid authenticated lease may grant preference to UNKNOWN traffic, subject to eligibility and operating-state checks. Sanctioned flows receive no preference.",
          "Never rewrites the DSCP it forwards and sets no ECN bits itself. CAKE may mark ECN-capable packets "
          "CE as its normal congestion signal.",
          "Leases always expire; sanctions override leases and corrections.",
          "Every applied configuration is versioned and read back; every decision is logged.",
          "New installs start in shadow mode; a separate watchdog engages a SAFE shaper on controller failure. SAFE "
          "assumes capacity does not keep collapsing, so it is not universally safe.",
-         "The action checker guarantees <b>admissibility</b> (fresh data, valid version, rate and step limits, budgets, "
-         "lease validity), not optimality or user benefit.",
+         "The action checker <b>checks admissibility against the implemented rules</b> (fresh data, valid version, rate "
+         "floor and step limits per evidence level, budgets, lease validity, operating state). It does not establish "
+         "optimality or user benefit.",
          "QoO is never reported as complete when a component is unknown."], "1")
 h2("10.2 Known limitations (stated before judges ask)")
 bullets(["Shaping below capacity costs a few percent of throughput.",
@@ -584,7 +600,9 @@ bullets(["Tata Elxsi TELIPORT S4 Case Study 3 problem statement; Tata Elxsi Q1 F
          "draft-ietf-ippm-qoo-11 Quality of Outcome (May 2026); draft-ietf-ippm-responsiveness-09 (Jul 2026)",
          "Zhao et al., 'The Sweet Danger of Sugar', SIGCOMM 2025; Sharma et al., IMC 2023 (WebRTC QoE without headers)",
          "Jain &amp; Dovrolis, Pathload / SLoPS (2002); Adams &amp; MacKay, Bayesian Online Changepoint Detection (2007)",
-         "Full design: docs/05 (blueprint v3.3), docs/06 (playbook), docs/07 (competitor analysis), docs/08 (decisions)"])
+         "<b>Authoritative specification: docs/09_VeriQ_v4_Specification.md (v4.1) with Appendix A implementation contracts "
+         "(rate floor, capacity vs throughput vs goodput, upward exploration, config ownership, first-packet marks, "
+         "settling onset/confirmation, selection rate vs coverage)</b>; change record: docs/10; supporting history: docs/05–08"])
 
 
 def main():
