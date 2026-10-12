@@ -71,10 +71,10 @@ Run **everything offline** with a local Jitsi Meet server: venue Wi-Fi must neve
 | 11–13 Oct | Confirm registration and deadlines on the portal. Set up an Ubuntu 24.04 laptop. Run `lab/quickstart_bufferbloat.sh` and get **your first real numbers**. |
 | 14–22 Oct | Round 1 slide: replace one target line with your measured Day-0 result. Do the reading list (§8). |
 | ≤ 24 Oct | Submit Round 1 (single slide PDF) |
-| 25 Oct – 13 Nov | Build before shortlisting: M1 observer, M5 enforcer + watchdog, M9 lab runner, M3 estimator v1 |
-| 14–20 Nov | M2 classifier + conformal; CESNET-QUIC22 cross-check |
-| 21–27 Nov | M4 control loop, M6 verifier + canary, M7 intents |
-| 28 Nov – 4 Dec | Real apps (WebRTC/dash.js), Grafana, 3D twin v1, physical kit bring-up |
+| 25 Oct – 13 Nov | **First milestone: lab runner + minimal WebRTC call + DASH player + bulk traffic + evidence ledger. Exit criterion: first reproducible call-plus-bulk experiment (FIFO vs SQM-CAKE vs cake-autorate).** Then observer + enforcer + watchdog. |
+| 14–20 Nov | Classifier (marks first, honesty kit) + capacity estimator v1 + fault localiser |
+| 21–27 Nov | Policy guardrails, receipts + offline QoO, leases + sanctions, shadow mode |
+| 28 Nov – 4 Dec | Expanded scenarios, Grafana polish, 3D twin replay v1, physical kit bring-up |
 | 5–13 Dec | Five-arm evaluation (≥10 runs), report, video, 10-slide deck, rehearsal |
 | Finale | Harden the kit, backup video, Q&A drills |
 
@@ -112,14 +112,14 @@ Run **everything offline** with a local Jitsi Meet server: venue Wi-Fi must neve
 
 ## 9. Panel Q&A bank
 1. **"CAKE already fixes bufferbloat. What did you add?"** Fault localisation before acting, budgeted leases for intents, payload-free class mapping, and receipts. Then show the **ablation chart** against tuned SQM-CAKE and the real cake-autorate, including where VeriQ did *not* win.
-2. **"How do you tell a capacity drop from congestion you caused, or from a slow remote server?"** Our queue building means we are the bottleneck (healthy). Our queue empty while **near and far** reflector delay rise means a WAN drop, so cut the shaper. **Only far** reflectors rising means a remote path, so hold. One reflector disagreeing means a bad measurement, so down-weight it. The lab scores these diagnoses against emulator ground truth.
+2. **"How do you tell a capacity drop from congestion you caused, or from a slow remote server?"** Our queue building means we are the bottleneck (healthy). Our queue empty while **near and far** reflector delay rise is *evidence consistent with* a WAN drop. VeriQ cuts fully only after corroboration (persistence across healthy reflectors, throughput below the shaper, a change-point, or a UDPST check); otherwise it applies the bounded fallback. **Only far** reflectors rising means a remote path, so hold. One reflector disagreeing means a bad measurement, so down-weight it. The lab scores these diagnoses against emulator ground truth.
 3. **"What if the classifier is wrong?"** We act only on single-class conformal sets; everything else is best effort and never promoted. We report coverage, selective accuracy and abstention rate separately, including under shift. Corrections become override rules.
 4. **"Can a 15-second before/after prove a policy helped?"** No, and we don't claim it does. Receipts are operational and return improved / degraded / **inconclusive**. Any regime change inside the window makes the result inconclusive, and rollback re-derives the delta for current capacity. Causal claims come only from randomised, repeated lab experiments with Holm correction.
 5. **"How do you guarantee no starvation?"** A non-zero config doesn't prove it, so we **measure progress** per class and host. In the core, a lease boosts a device inside CAKE, whose tin thresholds cap how much extra it can take. Hard guaranteed rates with HTB are a post-core experiment, because scheduler switching is the riskiest operation.
 6. **"CPU cost on a real gateway?"** Measured on the Pi 5 (and ideally an A53 OpenWrt router): observer cost, control loop at 5 Hz, CAKE throughput ceiling.
 7. **"How does this scale to millions of homes?"** The loop is local (no cloud dependency). Fleet management via TR-369 USP, staged canaries, federated model updates.
 8. **"IPv6? Wi-Fi? L4S?"** IPv6 tested in S8. Wi-Fi via AQL/airtime fairness in Phase 2. ECT(1) detection with DualPI2 on kernels ≥ 6.17.
-9. **"What is emulated?"** The ISP bottleneck (tbf/netem). It is labelled everywhere, and validated on the physical kit.
+9. **"What is emulated?"** The ISP bottleneck (tbf/netem). It is labelled everywhere. Validation on the physical kit is **planned**, not yet done.
 10. **"What would you build next?"** Wi-Fi airtime control, the CPE port (Go + libbpf), USP agent, field trial on a real DOCSIS/FWA line.
 
 11. **"Other teams also built CAKE-based controllers. How are you different?"** We report what users feel (WebRTC freezes, DASH stalls), not just ping. We diagnose the cause before acting, give real guaranteed rates for intents, abstain on uncertain flows, and compare ourselves against the real tuned SQM-CAKE and cake-autorate with confidence intervals. See `docs/07`.

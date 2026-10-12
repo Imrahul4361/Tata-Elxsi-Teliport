@@ -237,7 +237,7 @@ def build_case3(slide):
     ], fill=CARD2, title_color=AMBER)
     card(slide, 8.86, y, 4.17, h, "Bounded by design", [
         "Never inspects forwarded payload; headers + timing; IPv4 + IPv6",
-        [("• ", 10.5, True, BLUE), ("Intents = expiring, budgeted leases; CAKE caps any boost; misbehaving flows sanctioned; progress measured", 10.5, True, INK)],
+        [("• ", 10.5, True, BLUE), ("Intents = expiring leases selecting preferential CAKE treatment; misbehaving flows sanctioned; fairness measured", 10.5, True, INK)],
         "Abstains when unsure: never promotes an uncertain flow",
         "Shadow mode first; every decision logged; watchdog → SAFE shaper",
     ])
@@ -247,7 +247,7 @@ def build_case3(slide):
         (1.86, "Observe", "Header + timing of first packets per flow, app marks (NQB / L4S); v4/v6; no payload"),
         (2.12, "Understand", "Marks first, then a calibrated classifier (abstains) · capacity μ ± σ + UDPST idle test (RFC 9946) · fault localiser"),
         (2.04, "Decide", "Bounded guardrails: shaper = μ − kσ, change-point fast path · leases within budget"),
-        (1.86, "Enforce", "CAKE with bounded lease boosts; ordered, versioned, read-back apply"),
+        (1.86, "Enforce", "CAKE; leases select preferential tins; ordered, versioned, read-back apply"),
         (2.04, "Assess", "Receipts on WebRTC freezes, DASH rebuffers, delay, progress; estimated MOS labelled"),
         (1.71, "Show", "Grafana · 3D twin + replay: measured / estimated / illustrative"),
     ], dark="Assess")

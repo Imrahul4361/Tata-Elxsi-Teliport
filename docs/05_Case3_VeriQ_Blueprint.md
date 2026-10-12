@@ -1,4 +1,4 @@
-# 05 · Case 3 Solution Blueprint: **VeriQ** (v3.2)
+# 05 · Case 3 Solution Blueprint: **VeriQ** (v3.3)
 ### Finds the cause, protects what you chose, and proves it
 *Intent-aware home QoS with measurable outcomes, bounded adaptation and explainable recovery*
 *Case Study 3 (MCV): Adaptive QoS Engine for Mixed Home Broadband Traffic*
@@ -43,6 +43,12 @@
 > 3. **Traffic-protection sanctions** override the classifier, user corrections and leases, with an explicit recovery rule.
 > 4. p99.9 wording: "insufficient to characterise p99.9 reliably".
 > 5. **Missing throughput evidence = "unknown"**: QoO is withheld or labelled partial, never assumed to pass.
+>
+> **v3.3 (12 Oct 2026): final pre-build corrections. The architecture is now frozen; next step: build.**
+> 1. CAKE tin thresholds are *weight changes*, not caps or reservations.
+> 2. A minimal call/video harness moves into the **first** milestone.
+> 3. Diagnoses are worded as "evidence consistent with…" and need corroboration; unmeasured validations are marked *planned*.
+> 4. Uncertainty parameters are **starting hypotheses**; the router-queue change is supporting evidence, not proof; undo re-checks current conditions; restriction periods are capped, with a defined recovery test.
 >
 > Everything below is a **design with targets, not measured results**, until the lab produces them.
 
@@ -142,8 +148,12 @@ flowchart LR
 - **Precedence (v3.2): sanction > lease > user correction > mark > classifier.**
   - A **sanctioned** flow is held in best effort. It **cannot be promoted** by the classifier, by a user correction, or by a lease on its device: the lease boosts that device's other flows, not this one.
   - The sanction is keyed by flow (5-tuple), with capped memory: least-recently-used entries are evicted, and on overflow new flows default to unpromoted.
-  - **Recovery rule:** the sanction lifts automatically once the flow has stayed within its limits for a **penalty period** (default 60 s) after its last violation. The flow is then re-evaluated from scratch.
-  - Each repeat violation **doubles** the penalty, up to the flow's lifetime.
+  - **Recovery rule:** the sanction lifts automatically when the flow **qualifies**, i.e. throughout one full **penalty period** (default 60 s) after its last violation:
+    - (a) its rate stays within its allowance in every 1 s window;
+    - (b) it shows no queue-building signature;
+    - (c) it sends at least 20 packets, so a near-silent flow isn't "recovered" on no evidence. A flow that stays silent keeps its sanction until it either qualifies or expires from flow memory.
+  - After recovery the flow is re-evaluated from scratch.
+  - Each repeat violation **doubles** the penalty, **capped at 15 minutes**. The repeat counter resets after 1 hour without violations. These are starting parameters, to be tuned.
   - Every sanction and recovery goes into the decision log.
 - **What a singleton conformal set means:** VeriQ *acts* only on a single-class set. That is a rule for when to act; it does **not** claim the label is correct. Correctness is reported separately as selective accuracy.
 - **Honesty kit (v3.1).** Lesson from SIGCOMM 2025, "The Sweet Danger of Sugar": leaky splits inflated famous encrypted-traffic results, and shortcut features collapse under realistic tests.
@@ -195,12 +205,18 @@ Each test reports relative error, whether the [μ−2σ, μ+2σ] range contains 
 The difference from cake-autorate: a *confirmed* WAN diagnosis allows the full cut, and a *remote* diagnosis holds.
 
 **How the probes relate (corrected in v3.1).** The near-hop and far-reflector round trips are **overlapping observations, not independent legs**: a far RTT *contains* the access link and the near hop. VeriQ therefore never adds segment delays together (percentiles do not add anyway). It compares **patterns of change** against each probe's own baseline:
-- near and far rising together, with our queue empty, points to the access link;
-- far rising alone points beyond it.
+- near and far rising together, with our queue empty, is **evidence consistent with an access-link (WAN) problem**;
+- far rising alone is **evidence consistent with a problem beyond it**.
+
+A diagnosis becomes **confident** only with corroboration. It needs at least two of the following, otherwise it stays UNCERTAIN and the bounded fallback applies:
+1. the pattern persists across **≥ 2 healthy reflectors** for **≥ 3 of the last 6** samples;
+2. achieved throughput falls below the shaper rate while demand exists;
+3. a capacity change-point fires;
+4. a short UDPST check agrees, where a server is available and no lease is active.
 
 The router's own queue delay comes from qdisc statistics, which *are* separately observable. Wi-Fi delay is only visible from client-side measurements or driver statistics, so router-originated probes say nothing about the Wi-Fi hop.
 
-**Bounded fallback when the diagnosis is uncertain (v3.1, fully specified in v3.2).** "Cut only when WAN is confirmed" would leave real congestion untreated whenever the evidence is ambiguous, so VeriQ takes a small, bounded, reversible step. All values are defaults to tune in the lab.
+**Bounded fallback when the diagnosis is uncertain (v3.1, specified in v3.2, reframed in v3.3).** "Cut only when WAN is confirmed" would leave real congestion untreated whenever the evidence is ambiguous, so VeriQ takes a small, bounded, reversible step. **This rule is a hypothesis to be tested.** All numbers below (5% steps, 10% cumulative, 10 s windows, 30 s / 60 s / 5 min timers) are **starting parameters**, not validated safety limits. Scenario S13 evaluates them.
 
 - **Episode start:** the fast detector flags bufferbloat **and** the localiser's diagnosis is UNCERTAIN. VeriQ records the shaper rate at that moment as the **anchor S₀**.
 - **Episode end:** whichever comes first:
@@ -211,15 +227,18 @@ The router's own queue delay comes from qdisc statistics, which *are* separately
 - **Reset rule:** a new episode may start only **60 s after** the previous one ended. Within a **rolling 10-minute window** all episodes share one budget, so VeriQ cannot ratchet the rate down by declaring fresh episodes.
 - **Steps and cumulative limit:** each step cuts **≤ 5% of S₀**. The **total** fallback reduction is **≤ 10% of S₀** within the rolling window. That is at most two steps, each followed by a refractory period.
 - **Observation window per step:** a fixed **10 s before** vs **10 s after**, starting one refractory period after the change. Both windows use the same probes, need at least 50 samples each, and are compared with block bootstrap on p95 queuing delay.
-- **Mechanism check:** this guards against crediting an unrelated improvement. A step counts as **IMPROVED** only if:
+- **Attribution check:** this reduces the risk of crediting an unrelated improvement. A step counts as **IMPROVED** only if:
   1. p95 delay to the **near** probe falls beyond the bootstrap CI; **and**
-  2. the router's **own queue** now shows the standing backlog, i.e. the queue moved into the router as intended; **and**
-  3. no other policy change, regime change or large demand drop (> 30% fall in offered load) happened during the window.
+  2. no other policy change, regime change or large demand drop (> 30% fall in offered load) happened during the window.
+  - The router's own queue showing the standing backlog (i.e. the queue moved into the router) is recorded as **supporting evidence**. It is **not proof** that the step caused the improvement.
+  - Every receipt states "improvement observed; attribution supported by …", never "caused by".
 - **Throughput guard:** while demand exists, aggregate goodput must not fall by more than the step size + 2 percentage points. If it does, the step is **reverted** even if delay improved.
 - **Outcomes:**
   - **IMPROVED** → keep the step;
-  - **NOT IMPROVED** → revert to the pre-step rate;
-  - **INCONCLUSIVE** (too few samples, a concurrent change, a demand shift) → **revert**, and log that the evidence was insufficient.
+  - **NOT IMPROVED** or **INCONCLUSIVE** (too few samples, a concurrent change, a demand shift) → **undo the step, but re-check current conditions first**:
+    - if the capacity estimate and regime are unchanged, restore the pre-step rate;
+    - if they changed, **re-derive** the rate from the current estimate (μ − kσ) instead of blindly restoring the old number.
+    - The undo is logged with the evidence it was based on.
   - When the episode ends with bufferbloat still present and the cumulative limit reached, VeriQ **raises an alert** and holds.
 - **Logging:** every step logs `diagnosis=UNCERTAIN, episode_id, step, anchor, outcome, reason`.
 
@@ -233,8 +252,8 @@ The router's own queue delay comes from qdisc statistics, which *are* separately
 | Evidence | Diagnosis | Action |
 |---|---|---|
 | Our queue grows, external delay flat | Gateway is the bottleneck (healthy) | Nothing; the AQM handles it |
-| Our queue empty, near **and** far delay rise | **WAN capacity dropped** | Cut the shaper (fast path), re-probe upward slowly |
-| Only far reflectors rise, near hop fine | **Remote path** congestion | **Hold the shaper**; cutting it would waste capacity |
+| Our queue empty, near **and** far delay rise | **Consistent with a WAN capacity drop** (confident only after corroboration) | Confident: cut the shaper (fast path), re-probe upward slowly. Uncertain: bounded fallback. |
+| Only far reflectors rise, near hop fine | **Consistent with remote-path** congestion | **Hold the shaper**; cutting it would waste capacity |
 | WAN fine, Wi-Fi retries/airtime spike for a station | **Wi-Fi** bottleneck | Don't touch the WAN shaper; flag it (Phase 2: airtime weights) |
 | One reflector disagrees with the others | **Misleading measurement** | Down-weight it via reflector health voting; no action |
 | Contradictory or low-confidence evidence | **Unknown** | Conservative hold + alert |
@@ -249,10 +268,11 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 - **Decisions never depend on the slow outcome check to stay safe.** Guardrails act immediately; receipts explain afterwards.
 
 ### M5 · Enforcer: CAKE-only core with honest semantics
-**Core (v3.2): CAKE only.** The core uses `diffserv4`, per-host fairness and overhead compensation. This gives **bounded preferential treatment**: priority sharing with tin thresholds, **not hard minimum rates**. Fairness and progress are *measured*.
-- A lease steers the leased device's traffic into a higher tin by setting `skb->priority` (an internal mark only).
-- CAKE's own design bounds that preference: a tin that exceeds its share of the shaper rate loses its priority advantage for the excess. Per `tc-cake`, `diffserv4` gives the Video tin about half and the Voice tin about a quarter.
-- So a boosted device cannot starve the others. This is built into the scheduler, not a promise of ours.
+**Core (v3.2): CAKE only.** The core uses `diffserv4`, per-host fairness and overhead compensation. It gives **preferential treatment, not hard minimum rates**.
+- **Leases select preferential CAKE treatment.** The leased device's traffic is steered into a higher tin by setting `skb->priority` (an internal mark only).
+- **Tin thresholds reduce that preference above configured usage levels.** In `tc-cake`, when a tin's usage crosses its threshold, CAKE lowers that tin's scheduling weight. For `diffserv4` that is roughly 50% of the shaper rate for Video and 25% for Voice.
+- The threshold is **shared by everything in the tin**. It is **not** a per-device ceiling and **not** a bandwidth reservation, and the tin can still use spare capacity.
+- **Per-device fairness and other traffic's progress are evaluated separately**, by measurement in every run. We do not claim that the scheduler alone prevents starvation.
 
 **Post-core experiment: HTB reservations and scheduler switching.** This is the design to test only once the core works end to end. It would give **real minimum rates** while intents are active. The tree is specified exactly:
    - parent class `rate = ceil = S` (the shaper rate);
@@ -291,12 +311,12 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 
 ### M7 · Intent Leases
 - A lease looks like `{who (authenticated), target device/class, goal, ttl, budget_share}`.
-- **Core semantics (v3.2):** a granted lease gives the device **bounded preferential treatment** in CAKE (a higher tin, capped by CAKE's tin thresholds). It is **not** a guaranteed rate.
+- **Core semantics (v3.3):** leases select preferential CAKE treatment (a higher tin). Tin thresholds reduce that preference above configured usage levels. It is **neither a cap nor a guaranteed rate**.
 - **Promotion budget (core):**
-  - at most **2 active leases** per household and one per device;
+  - at most **2 active leases** per household and one per device. This is a **provisional admission rule** to be tuned from experiments, **not** a proof of fairness;
   - a maximum duration (default 2 h);
-  - the total share of boosted traffic is bounded by CAKE's tin thresholds.
-  - Admission control grants or refuses each request and gives the reason.
+  - admission control grants or refuses each request and gives the reason;
+  - fairness is established only by measured per-device progress and Jain index.
 - **Lease assurance:** receipts check whether the leased device actually saw lower delay and fewer freezes. If not, the receipt says so and the user is told plainly.
 - **Post-core:** hard guaranteed rates (the HTB budget in M5).
 - Leases always expire; renewing requires re-authentication.
@@ -385,7 +405,7 @@ RPM (draft-09) is reported **with its band** (Poor / Fair / Good / Excellent) an
 | S10 | Wi-Fi is the bottleneck (weak client) | Diagnosed as Wi-Fi (from client-side probes / driver stats); WAN shaper untouched |
 | S11 | Bulk flow falsely marked DSCP 45 | Sanctioned within 1 s; a user correction or lease cannot re-promote it; the sanction lifts only after the penalty period of good behaviour |
 | S12 | One hour of shadow mode beside cake-autorate | Disagreement report; each disagreement judged against lab ground truth |
-| S13 | Ambiguous evidence (injected), incl. an unrelated improvement during the window | Steps ≤ 5% each, ≤ 10% cumulative per 10 min; the unrelated improvement is **not** credited (mechanism check → INCONCLUSIVE → revert); throughput guard holds |
+| S13 | Ambiguous evidence (injected), incl. an unrelated improvement during the window | Evaluates the fallback *hypothesis*: limits respected; the unrelated improvement is flagged as concurrent change → INCONCLUSIVE → condition-aware undo; throughput guard holds |
 
 **Tiered run matrix (v3.1).** Don't start with hundreds of runs:
 - **Tier 1:** 4 arms (FIFO, SQM-CAKE, cake-autorate, VeriQ) × 3 scenarios (S1, S2, S6) × 10 runs = **120 runs**.
@@ -397,7 +417,7 @@ RPM (draft-09) is reported **with its band** (Poor / Fair / Good / Excellent) an
 ## 5. MVP spine vs stretch tracks (scope discipline)
 
 **MVP spine (must work end-to-end by 13 Dec), in build order (v3.1: harness first):**
-1. **netns lab + scenario runner + WebRTC/DASH harness + evidence ledger.** This produces the data that the classifier, QoO and receipts all need, so it comes first.
+1. **First milestone (25 Oct – 13 Nov):** netns lab + scenario runner + a **minimal working call/video harness** (one WebRTC call + one DASH player + bulk traffic) + evidence ledger. The **first reproducible call-plus-bulk experiment** (FIFO vs SQM-CAKE vs cake-autorate) is the milestone exit criterion. Dashboard polish and extra scenarios come later.
 2. Real baselines (SQM-CAKE, cake-autorate) + Tier-1 runs.
 3. Userspace observer reading DSCP/ECN + marks-first classifier with the honesty kit and abstention.
 4. Capacity estimator (cake-autorate starting values, UDPST idle probe) + fault localiser + bounded fallback.
@@ -425,13 +445,13 @@ RPM (draft-09) is reported **with its band** (Poor / Fair / Good / Excellent) an
 1. Payload of forwarded traffic is never inspected.
 2. Abstained flows are never promoted.
 3. Leases always expire.
-4. Lease preference is bounded by CAKE's tin thresholds, and **progress is measured** for every class and host. Hard floors are post-core.
+4. Lease preference is reduced by CAKE's tin thresholds above configured usage levels (not a cap), and **progress is measured** for every class and host. Hard floors are post-core.
 5. Every applied config is versioned and read back.
 6. A watchdog engages the SAFE shaper on heartbeat loss, with time-to-safe measured.
 7. VeriQ never rewrites the DSCP of packets it forwards and never sets ECN bits itself. Its AQMs may mark ECN-capable packets CE as their normal congestion signal.
 8. Every decision, including "do nothing", is logged with a reason. New installs start in shadow mode.
 9. Traffic-protection sanctions always take precedence over the classifier, user corrections and leases.
-10. The uncertainty fallback never cuts more than 10% of the anchor rate per rolling 10 minutes, and reverts on NOT IMPROVED or INCONCLUSIVE.
+10. The uncertainty fallback enforces its configured limits (starting values: 10% of the anchor rate per rolling 10 minutes). It undoes NOT IMPROVED or INCONCLUSIVE steps after re-checking current conditions. Whether these limits are *safe* is an experimental question (S13), not a claim.
 11. QoO is never reported as complete when a component is unknown.
 
 **Known limitations:**
