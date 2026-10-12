@@ -611,7 +611,7 @@ All A.1 rules and refusal codes remain. Changes and additions:
 ### 8.4 Watchdog (C11)
 
 - `veriq-watchdog` is a POSIX sh loop under procd (the second instance of `/etc/init.d/veriq`).
-- Every 2 s it checks the mtime of `/var/run/veriq/heartbeat`, which veriqd touches every 1 s.
+- Every 2 s it reads `/var/run/veriq/heartbeat`, into which veriqd writes the **monotonic uptime** (from `/proc/uptime`) every 1 s, and compares it with the current `/proc/uptime`. Wall-clock mtime is not used, because an NTP clock step would fake a stale heartbeat (A18).
 - If the heartbeat is > 10 s old and the state is not DISABLED, it runs `tc qdisc change` to the SAFE rates from `/var/run/veriq/safe.env`, which veriqd writes whenever the rates change. It logs to syslog and writes `state=SAFE`.
 - **Time-to-safe target ≤ 12 s.**
 - procd respawns veriqd (respawn threshold 3600 s, timeout 5 s, retry 5); the reconciler then adopts the state.
@@ -677,7 +677,7 @@ The household view shows only plain-language summaries, such as "Your call is pr
 | A3 | Capacity recovers 20 → 100 | Load ≥ 75%, D < 5 ms | PROBE_UP ×1.04/s | Raise +2% per 3 s (read: defaults) → slower reclaim | A3 | Time to 90% of the new capacity ≤ comparator |
 | A4 | Remote-path delay (+80 ms beyond the ISP first hop) | FAR up, NEAR flat, no THR → REMOTE L2 | **Hold** | Cut toward the minimum (decrease branch has no load check; read) | S6 | Inappropriate interventions: count/magnitude/duration below comparator (primary) |
 | A5 | One reflector lies (spikes or deprioritised ICMP) | Outlier > 3 × MAD for > 10 s | Exclude and rotate; median unaffected | The mean is shifted by one reflector (read: averaging) | S7 | No rate change attributable to the reflector |
-| A6 | All reflectors unreachable (ICMP blocked/outage) | Quorum lost → L0, PROBE_FAULT | Hold at the current S; DEGRADED after 60 s; fall back to static | The last good latency is frozen (read). Rates hold if the outage began at normal delay; cuts continue only if the frozen value was already elevated, or if no good sample exists yet (startup → 9999 ms) (hypothesis) | A6 | S stays within ±5% of the pre-fault S; recovery needs no manual action |
+| A6 | All reflectors unreachable (ICMP blocked/outage) | Quorum lost → L0, PROBE_FAULT | Hold at the current S; DEGRADED after 60 s; fall back to static | The last good latency is frozen (read). Rates hold if the outage began at normal delay; cuts continue only if the frozen value was already elevated (hypothesis). Before 5 good baseline samples exist, no rate logic runs (read) | A6 | S stays within ±5% of the pre-fault S; recovery needs no manual action |
 | A7 | Base RTT rises permanently (+15 ms route change) | Windowed-min baseline re-learns within 10 min of low-load samples | Fallback-bounded at worst (≤ 10%/10 min) while it re-learns | Lower-only baseline → permanent delta > threshold → repeated cuts (read: baseline update rule) | A7 | Cumulative magnitude below comparator; no stuck-at-minimum |
 | A8 | Wi-Fi client is the bottleneck | WIFI + FAR flat → WIFI_LIKELY | Hold; tell the user which device and why | No reaction expected (WAN probes unaffected) | S10 | Correct diagnosis shown; no WAN cut |
 | A9 | Upload saturation only (cloud backup) | OWD up-delta, or load attribution | Cut **upload only** | Shared RTT for both directions, with a direction guard (read): no cut of a direction under 50% load while the other is ≥ 75%. A collateral cut remains possible when the idle side is ≥ 50% or the loaded side is < 75% (hypothesis) | S4 | Download S unchanged (±5%); upload delay p95 ≤ comparator |
@@ -1247,6 +1247,7 @@ With 3 people, R4 is shared.
 | O8 | SHADOW duration | 24 h; tune after the pilot |
 | O9 | Envelope thresholds | Starting values in §5.7; tune in S11/A11 |
 | O10 | Wi-Fi diagnosis thresholds | 30% retries; tune on hardware |
+| O11 | A first hop that deprioritises ICMP under load could make "NEAR rising with OWN empty" look like WAN_LIKELY (A32) | Keep the §7.2 rule; if A32 shows false cuts, also require load ≥ 0.6 on that direction for the NEAR path to count, and record the change in docs/12 |
 
 **Decision: BUILD.** No further architecture revision before Sprint 2's exit criterion. Changes after that come from measurements and are recorded in docs/12.
 

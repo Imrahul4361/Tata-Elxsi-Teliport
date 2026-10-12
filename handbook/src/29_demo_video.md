@@ -8,7 +8,7 @@ The judges will spend a few minutes with VeriQ. In that time they must see three
 
 Five rules govern every minute of the demo. They come from the credibility rules in docs/06 §10 and the demonstration plan in docs/09 §7.
 
-1. **The judge drives.** The judge turns the capacity knob, presses the fault buttons and chooses the order. VeriQ reacts to its own telemetry, never to a hidden scenario label. The ESP32 panel talks only to the ISP emulator (and, for the kill button, to a restricted SSH command); it never tells `veriqd` what fault was injected.
+1. **The judge drives.** The judge turns the capacity knob, presses the fault buttons and chooses the order. VeriQ reacts to its own telemetry, never to a hidden scenario label. The panel's inputs reach only the ISP emulator (through the hub laptop) and, for the kill button, one restricted SSH command; nothing tells `veriqd` what fault was injected.
 2. **Fully offline.** The call server, the DASH content, the file server and the reflectors all live on the ISP emulator. Venue Wi-Fi and internet access play no part.
 3. **Every number on screen is labelled.** Live counters from the kit are *measured (emulated link)*. Capacity estimates and diagnoses are *estimated*. House graphics and particles are *illustrative*. Design limits such as "time-to-safe ≤ 12 s" are *targets*.
 4. **One idea per step.** Each step demonstrates one claim from the design and names the scenario that tests it (S1–S13, A1–A32).
@@ -37,7 +37,7 @@ Run this list from the printed card, not from memory. The person who runs it sig
 **T − 60 min**
 - Power on the emulator, then the router, then the hub laptop. Confirm the router is in LIVE (the kit profile uses start mode "Adapt now"; say so if asked, because the product default is 24 h of SHADOW).
 - Run `veriqctl health` and `veriqctl selftest` on the router. Both must pass, including the tin self-test in both directions.
-- Run the emulator's `emu-agent selfcheck` (Chapter 32): every reflector answers echo and timestamp, and the servers respond.
+- On the Autorate page, confirm that at least five far reflectors are qualified with timestamp support; check that the Jitsi, DASH and file servers respond (kit tests 2–3, Chapter 32).
 - Start the Jitsi call between the call laptop and the remote participant. Confirm video and the stats overlay.
 - Press RESET on the panel. The emulator returns to 100/20 Mbit/s, no faults.
 

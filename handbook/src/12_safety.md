@@ -301,7 +301,7 @@ while :; do
 done
 ```
 
-> **Implementation tip.** docs/11 §8.4 checks the heartbeat file's *mtime*, which follows the wall clock. NTP may step that clock by an hour on a router without a real-time clock (A18), causing a false SAFE. The sketch writes monotonic uptime *into* the file and compares it with `/proc/uptime`, which no clock step disturbs. This is a recommended refinement; record it in docs/12 if adopted.
+> **Implementation tip.** An earlier draft of docs/11 §8.4 checked the heartbeat file's *mtime* (now corrected to monotonic uptime), which follows the wall clock. NTP may step that clock by an hour on a router without a real-time clock (A18), causing a false SAFE. The sketch writes monotonic uptime *into* the file and compares it with `/proc/uptime`, which no clock step disturbs. This is a recommended refinement; record it in docs/12 if adopted.
 
 > **Implementation tip.** For `hfsc` and `htb`, a SAFE change is several ordered commands. Let `veriqd` pre-render them into a `tc -batch` file beside `safe.env`, so the watchdog stays backend-agnostic.
 

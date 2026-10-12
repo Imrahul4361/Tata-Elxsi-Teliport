@@ -34,7 +34,7 @@ The kit is a P1 deliverable (Sprint 5+, docs/11 §18) and the second stretch tra
 - **Management path:** a direct cable between the hub laptop's USB Ethernet adapter and the emulator's second port. Fault commands and truth data use it and never cross the shaped link.
 - **Panel path:** USB serial between the ESP32 and the hub laptop. It also powers the ESP32. No Wi-Fi is involved.
 
-The hub laptop also polls the router over the LAN for telemetry (status, per-tin statistics and the last decisions). That traffic is small and never crosses the WAN shaper.
+The hub also polls the router over the LAN for telemetry; that traffic is small and never crosses the WAN shaper.
 
 ## Network plan
 
@@ -57,11 +57,11 @@ The hub laptop also polls the router over the LAN for telemetry (status, per-tin
 ### Inside the emulator
 
 ```text
-  router WAN ── eth-rtr [ns isp] ── veth-core ══ [ns core] ── veth-inet ── [ns inet]
-                  tbf (download:      tbf (upload:     netem (remote        ├─ servers
-                  rate + bloated      rate + bloated   delay, off by        └─ veth-r1..r8
-                  FIFO)               FIFO)            default)                  └─ [ns refl1..8]
-  near target = 100.64.10.1 on eth-rtr: unaffected by the core netem, so NEAR stays flat
+ router WAN ── eth-rtr [ns isp] ── veth-core ══ [ns core] ── veth-inet ── [ns inet]
+               tbf (download:      tbf (upload:     netem (remote       ├─ servers
+               rate + bloated      rate + bloated   delay, off by       └─ veth-r1..r8
+               FIFO)               FIFO)            default)               └─ [ns refl1..8]
+ near target = 100.64.10.1 on eth-rtr: unaffected by the core netem, so NEAR stays flat
 ```
 
 The download bottleneck is a tbf on `eth-rtr` (egress toward the router); the upload bottleneck is a tbf on `veth-core` (egress toward the internet). Each tbf has a buffer of 300 ms at the baseline rate, like the Day-0 lab, so a bulk transfer fills it unless VeriQ shapes below the line rate. The buffer is fixed in bytes, so when the knob lowers the rate, the same buffer holds more milliseconds of delay, as real modems do.
@@ -163,7 +163,7 @@ A WS2812B LED can draw roughly 60 mA at full white (a common rule of thumb; meas
 
 ## Firmware
 
-The firmware is deliberately simple: it reports inputs and draws what the hub tells it to draw. All logic that could need a fix on demo day (interlocks, mapping to faults, text on the display) lives in the hub's Python code.
+The firmware only reports inputs and draws what the hub sends. Logic that might need a fix on demo day (interlocks, fault mapping, display text) lives in the hub's Python code.
 
 - **Framework:** Arduino core for the ESP32 (ESP-IDF underneath).
 - **Libraries:** FastLED (LEDs), U8g2 (OLED) and ArduinoJson (messages). Pin exact library versions in the build file and check each licence at that version.
@@ -184,7 +184,9 @@ constexpr int SEG = 12, SEGS = 5, NUM_LEDS = SEG * SEGS;   // WAN, RT, IV, BE, B
 constexpr uint8_t MAX_BRIGHT = 64;                         // about 25%: power budget
 constexpr uint32_t HUB_TIMEOUT_MS = 3000, DEBOUNCE_MS = 30, KILL_HOLD_MS = 1000;
 
-struct Button { uint8_t pin; const char* id; uint32_t hold; bool down; uint32_t t0; bool sent; };
+struct Button {
+  uint8_t pin; const char* id; uint32_t hold; bool down; uint32_t t0; bool sent;
+};
 Button buttons[] = {
   {26, "wan_drop", 0}, {27, "remote_delay", 0}, {19, "lying_reflector", 0},
   {13, "kill", KILL_HOLD_MS}, {4, "reset", 0}};
@@ -233,7 +235,10 @@ void handleLine(const String& s) {         // messages from the hub
   if (strcmp(t, "disp") == 0) {
     for (int i = 0; i < 3; i++) strlcpy(line[i], doc["l"][i] | "", sizeof line[i]);
   } else if (strcmp(t, "bars") == 0) {
-    for (int i = 0; i < SEGS; i++) { barLen[i] = doc["b"][i] | 0; barSev[i] = doc["s"][i] | 0; }
+    for (int i = 0; i < SEGS; i++) {
+      barLen[i] = doc["b"][i] | 0;
+      barSev[i] = doc["s"][i] | 0;
+    }
     truthIdx = doc["truth"] | -1;
   }
 }
@@ -253,7 +258,8 @@ void draw(uint32_t now) {
   oled.clearBuffer(); oled.setFont(u8g2_font_6x12_tf);
   if (hubLost) { oled.drawStr(0, 12, "HUB LOST"); oled.drawStr(0, 28, "inputs ignored"); }
   else for (int i = 0; i < 3; i++) oled.drawStr(0, 12 + 16 * i, line[i]);
-  oled.drawStr(0, 63, digitalRead(PIN_ARM) == LOW ? "ARMED  EMULATED LINK" : "SAFE (disarmed)");
+  bool armed = digitalRead(PIN_ARM) == LOW;
+  oled.drawStr(0, 63, armed ? "ARMED  EMULATED LINK" : "SAFE (disarmed)");
   oled.sendBuffer();
 }
 
@@ -293,7 +299,7 @@ The encoder switch is not debounced in this skeleton; add the same debounce as t
 - **Panel ↔ hub:** USB serial, 115200 baud, 8N1, one JSON object per line, at most 512 bytes per line.
 - **Hub ↔ emulator:** MQTT over the management cable. The broker (Mosquitto) runs on the hub, listening on the management interface and on localhost only.
 - **Hub ↔ twin:** the twin bridge (Chapter 30) subscribes to the router-telemetry topic instead of polling the router a second time.
-- **Optional wireless panel:** the ESP32 may publish to the same topics over Wi-Fi to a kit-private access point. USB serial is the default because it cannot be disturbed by the venue's radio environment.
+- **Optional wireless panel:** the ESP32 may publish to the same topics over Wi-Fi via a kit-private access point; USB serial stays the default because venue radio cannot disturb it.
 
 ### Topics and messages
 
@@ -408,10 +414,10 @@ if __name__ == "__main__":
 **The restricted kill key.** On the router, the kill key is installed in Dropbear's `authorized_keys` with a forced command, so the key can do one thing only:
 
 ```text
-command="kill -9 $(pidof veriqd)",no-port-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... kit-kill
+command="kill -9 $(pidof veriqd)",no-port-forwarding,no-pty ssh-ed25519 AAAA... kit-kill
 ```
 
-Check that your Dropbear build honours these options before the event (try the key with another command and confirm it still only kills `veriqd`). Remove the key, and the read-only rpcd user, from the router after the event.
+Add the other restriction options your Dropbear build supports (for example `no-agent-forwarding`). Check that it honours them before the event (try the key with another command and confirm it still only kills `veriqd`). Remove the key, and the read-only rpcd user, from the router after the event.
 
 ## Safety interlocks
 
@@ -450,7 +456,7 @@ Check that your Dropbear build honours these options before the event (try the k
 
 **Hole sizes:** measure each button's thread, the encoder shaft and the OLED's visible area with calipers, and add 0.3–0.5 mm clearance. Buttons of the same nominal size differ between suppliers.
 
-**Inside the panel:** mount the ESP32 and the level shifter on a small perfboard with screw terminals, so a wire can be replaced without soldering at the venue. Add strain relief for the USB cable and the 5 V input.
+**Inside the panel:** mount the ESP32 and the level shifter on perfboard with screw terminals, so a wire can be replaced without soldering at the venue; add strain relief for the USB and 5 V cables.
 
 ### Transport
 
@@ -521,4 +527,4 @@ Targets are starting values, to be confirmed on the assembled kit.
 | 16 | Power | Inline meter on the LED supply during a full-bar test | Below the budget (about 1 A) |
 | 17 | Transport | Pack, carry, unpack and rebuild | Rebuilt and passing tests 1–4 within 20 min |
 
-Record every run of this checklist with its date and results in the evidence ledger under `kit/`. A kit test failure found at rehearsal is a discrepancy to log and fix, exactly like a lab result that differs from expectation.
+Record every run of this checklist in the evidence ledger under `kit/`. A failure found at rehearsal is a discrepancy to log and fix, like any unexpected lab result.

@@ -6,7 +6,7 @@ Six pieces carry the most risk and get full Go skeletons: `checker.Check` with e
 
 The skeletons were written to compile against the types of docs/11 §14.2, but they are **starting code, not tested product code**. Import paths are shortened to `veriq/internal/...`; use the module path from `go.mod`. Every numeric constant is a **starting parameter** from docs/11 or docs/09 Appendix A, to be tuned in Stage 2 and recorded in the run manifest.
 
-> **Note.** Effort figures are **assumptions** in person-days for one developer who already knows Go basics. They include unit tests but not lab evaluation. Treat them as planning inputs for chapter 22, not commitments.
+> **Note.** Effort figures are **assumptions**: person-days for one developer who knows basic Go, including unit tests but not lab evaluation. The build order and sprint mapping are in the summary table at the end of this chapter and in chapter 22.
 
 ## How the packages fit together
 
@@ -30,10 +30,9 @@ cmd/veriqd, cmd/veriqctl
  config ── model ── clock          (imported by everyone)
 ```
 
-- `model` and `clock` import nothing from VeriQ.
 - `checker` imports only `model` and stays pure (no I/O, clock or logging), so it is fully table-testable.
-- `enforce` is the only package that runs `tc` or `nft` with side effects. `observe` and `reconcile` run them read-only.
-- `api` never touches decision state. It sends requests to the control goroutine over a channel and waits for a reply.
+- `enforce` is the only package that runs `tc` or `nft` with side effects; `observe` and `reconcile` only read.
+- `api` never touches decision state; it sends requests to the control goroutine over a channel.
 
 ### Goroutines and channels in `cmd/veriqd`
 
@@ -51,10 +50,6 @@ cmd/veriqd, cmd/veriqctl
 ```
 
 Each input channel is buffered and **lossy by design**: a reader that cannot deliver drops the oldest message and counts the drop. A tick never waits for I/O; missed inputs appear as stale samples, which the checker and diagnosis treat conservatively.
-
-### Build order
-
-The order follows docs/11 §18. Sprint 0: `clock`, `model`, `config` and an `api` stub. Sprint 1: `enforce` (cake), `observe`, `probe`, the baselines in `estimate`, `telemetry`. Sprint 2: `diagnose`, `control`, `checker`, `reconcile`, `state`. Sprint 3: `classify` (rules, sets), `lease`, `sanction`, `importer`. Sprint 4: `receipt`. P1: the ML part of `classify` and the `hfsc`/`htb` backends.
 
 ## clock
 
@@ -102,19 +97,12 @@ func Wall() time.Time    // the only wall-clock accessor; logs, receipts, leases
 package config
 
 type Config struct {
+    // One struct field per Appendix B section: Global, WAN, Shaping, Cake, HFSC,
+    // HTB, Controller, Probe, Classify, Envelope, Leases, Privacy, Alerts.
     Global     Global
-    WAN        WAN
     Shaping    Shaping
-    Cake       Cake
-    HFSC       HFSC
-    HTB        HTB
     Controller Controller
-    Probe      Probe
-    Classify   Classify
-    Envelope   Envelope
-    Leases     Leases
-    Privacy    Privacy
-    Alerts     Alerts
+    // ...
     Devices    []Device
     Rules      []Rule
     IPSets     []IPSet
@@ -146,7 +134,7 @@ func (c *Config) Envelope(d model.Dir) (min, base, max float64) // kbit/s
   - **S_min ≤ 0.8 ×** the lowest capacity in the configured scenario set, when a scenario set is given (docs/09 A.2).
 - Derived values: `S_min = max(1000, min_frac·base)` and `S_max = max_frac·base`.
 
-**Errors.** A fatal issue makes `veriqd` refuse the new config and keep running on the previous one. Reload therefore never makes things worse. `veriqctl config validate` prints every issue as `section.option: message`. Non-fatal issues (for example an unknown option) become warnings shown in LuCI.
+**Errors.** A fatal issue makes `veriqd` refuse the new config and keep the previous one, so a reload never makes things worse. `veriqctl config validate` prints each issue as `section.option: message`; non-fatal issues become LuCI warnings.
 
 **Tests.** `TestParseQuotesAndLists`, `TestParseRejectsUnterminatedQuote`, `TestDefaultsMatchAppendixB`, `TestSminFloor1000`, `TestLiteForcesMLOff`, `TestMigrateV4ToV5`, `TestIssueReportsSectionOption`, and `FuzzParse` (the parser must never panic).
 
@@ -190,7 +178,7 @@ func ParseLabel(s string) (Label, error)
 
 **Errors.** `ParseLabel` and friends return an error for an unknown name. Replay of an old log with an unknown label fails loudly rather than guessing.
 
-**Tests.** `TestMarkRoundTrip` (all 8 × 8 class/prov pairs), `TestMarkNeverTouchesOtherBits` (bits 0–23 and 31 are preserved), `TestLabelJSONRoundTrip`, `TestSnapshotCopyIsDeep`.
+**Tests.** `TestMarkRoundTrip` (all 8 × 8 class/prov pairs), `TestMarkNeverTouchesOtherBits` (bits 0–23 and 31), `TestLabelJSONRoundTrip`.
 
 **Acceptance.** The mark constants equal the values the nft renderer emits, checked by a shared golden test with `enforce`.
 
@@ -198,14 +186,7 @@ func ParseLabel(s string) (Label, error)
 
 ## observe
 
-**Purpose.** Collect every kernel and system input the controller needs, timestamp it with the monotonic clock, and deliver it as typed messages:
-- qdisc and tin statistics (`tc -s -j`);
-- nft counters and set contents (`nft -j`);
-- conntrack events and accounting (netlink);
-- NFLOG header samples (group 7) and envelope violations (group 8);
-- Wi-Fi station statistics (ubus/hostapd/iwinfo);
-- DHCP leases and the neighbour table (device identity);
-- softirq CPU (`/proc/stat`) and link state (netifd hotplug, carrier).
+**Purpose.** Collect every input the controller needs, timestamp it with the monotonic clock and deliver it as typed messages: qdisc and tin statistics (`tc -s -j`), nft counters (`nft -j`), conntrack events (netlink), NFLOG samples (group 7) and envelope violations (group 8), Wi-Fi station statistics, DHCP and neighbour tables, softirq CPU and link state.
 
 **Public API.**
 
@@ -260,7 +241,7 @@ func Throughput(prev, cur QdiscStats, overheadBytes int) model.Sample
 - A failed read gives `OK = false` and increments a per-source counter; after 3 consecutive failures `state` is told the source is failing.
 - Malformed JSON is counted and logged at `debug`; the parser never panics.
 
-**Tests.** `TestParseTCCakeDiffserv4` (golden JSON from the lab kernel), `TestParseTCHFSC`, `TestThroughputCounterReset`, `TestThroughputAddsOverhead`, `TestNFLOGTruncatesToHeaders`, `TestConntrackSetMarkMask` (netns), `TestPollWiFiNoHostapd`, `FuzzParseTC`, `FuzzParseNFTJSON`.
+**Tests.** `TestParseTCCakeDiffserv4` (golden JSON from the lab kernel), `TestThroughputCounterReset`, `TestThroughputAddsOverhead`, `TestNFLOGTruncatesToHeaders`, `TestConntrackSetMarkMask` (netns), `FuzzParseTC`, `FuzzParseNFTJSON`.
 
 **Acceptance.**
 - G_gw matches iperf3 wire rate within ±3% in the netns lab at 20 and 100 Mbit/s (target).
@@ -850,26 +831,18 @@ type FlowSamples struct{ /* up to 32 PktHdr per flow, ring per ct id */ }
 func Features(f *FlowSamples, k int) []float64 // no addresses, no payload
 
 type Decision struct {
-    Proba    []float64
-    Set      []int
-    Class    model.Class // valid only if Act
-    Act      bool        // singleton → propose MARK_SET (PROV = ML)
+    Proba []float64
+    Set   []int
+    Class model.Class // valid only if Act
+    Act   bool        // singleton → propose MARK_SET (PROV = ML)
 }
 func (m *Model) Decide(f *FlowSamples, k int) (Decision, error)
 ```
 
 **Internal design.**
-- **Rule compiler.** QoSmate-compatible options map to nft expressions:
-  - ranges become `30000-65535`;
-  - lists become anonymous sets;
-  - `!=` becomes `!=`;
-  - `@set` references a named set;
-  - an IPv6 suffix `::1234/::ffff` becomes `ip6 saddr & ::ffff == ::1234`.
-
-  Each rule writes CLASS and PROV = 5 only if the stored PROV is lower (precedence in the kernel, docs/11 §5.2). Device targets resolve to the device's IPv4 and every current IPv6 address.
-- **Validation.** The candidate ruleset goes to `enforce`, which runs `nft -c -f`. A failure is reported against the rule's `name`.
-- **ML.** Features are the size and inter-arrival statistics of docs/11 §5.6. The 5 model classes map as STREAM → BE, WEB → BE, BULK → BK. A singleton RT/IV verdict becomes a `MARK_SET` proposal for the checker, written only when the stored PROV < 3. Abstention writes nothing.
-- **Drift signal.** The package keeps weekly abstention and class-mix counters. Above 80% abstention, the UI shows that the model is uncertain on this network. The model is never retrained on the device.
+- **Rule compiler.** QoSmate-compatible options become nft expressions: ranges, anonymous sets for lists, `!=`, `@set` references, and IPv6 suffixes (`::1234/::ffff` → `ip6 saddr & ::ffff == ::1234`). A rule writes CLASS and PROV = 5 only over a lower stored PROV (docs/11 §5.2). Device targets cover the IPv4 and every current IPv6 address. The candidate is validated with `nft -c -f`, and failures are reported by rule `name`.
+- **ML.** Features follow docs/11 §5.6; STREAM and WEB map to BE, BULK to BK. A singleton RT/IV verdict becomes a `MARK_SET` proposal, written only over a stored PROV < 3. Abstention writes nothing.
+- **Drift signal.** Weekly abstention and class-mix counters; above 80% abstention the UI says the model is uncertain here. No on-device retraining.
 
 **Key algorithms: tree evaluator and conformal set builder.** LightGBM multiclass trees are interleaved: tree t adds to class t mod K. Probabilities are a softmax of the raw sums. The conformal step is class-conditional (Mondrian) split conformal [R29], [R30]:
 - for each class y, the threshold q_y is the ⌈(n_y + 1)(1 − α)⌉-th smallest calibration score 1 − p̂_y, with α = 0.05;
@@ -999,11 +972,9 @@ func Quantile(scores []float64, alpha float64, minN int) (float64, bool) {
 - A flow scores p = (0.78, 0.15, 0.03, 0.03, 0.01). Only RT satisfies 1 − p ≤ q (0.22 ≤ 0.30), so the set is {RT}: a singleton, and VeriQ proposes MARK_SET RT with PROV = ML.
 - Another flow scores p = (0.45, 0.50, …). Both RT (0.55 > 0.30: no) and IV (0.50 > 0.45: no) fail, and the set is empty. VeriQ abstains, and the flow stays BE.
 
-**Errors.**
-- A model or catalogue that fails signature verification is not loaded. The previous one stays, and health reports the failure.
-- A checkpoint with fewer than 200 calibration samples per class is disabled (`Enabled = false`), so the flow abstains at that checkpoint.
+**Errors.** A model or catalogue that fails signature verification is not loaded; the previous one stays and health reports it. A checkpoint with < 200 calibration samples per class is disabled, so flows abstain there.
 
-**Tests.** `TestCompileQoSmateRuleGolden` (one golden nft file per QoSmate rule example), `TestCompileNegationAndRanges`, `TestCompileIPv6Suffix`, `TestDeviceRuleCoversPrivacyAddresses`, `TestDSCPMapping`, `TestHeuristicsOnlyDemote` (C7), `TestH3OffOnCake`, `TestTreeEvalGoldenVectors` (Go vs Python, |Δp| < 1e-9), `TestTreeNaNTakesDefault`, `TestConformalSingleton`, `TestConformalEmptyAbstains`, `TestQuantileMatchesPython`, `TestCheckpointDisabledBelow200`, `TestAbstentionNeverMarks`, `FuzzCompileRule`.
+**Tests.** `TestCompileQoSmateRuleGolden`, `TestCompileIPv6Suffix`, `TestDeviceRuleCoversPrivacyAddresses`, `TestDSCPMapping`, `TestHeuristicsOnlyDemote` (C7), `TestH3OffOnCake`, `TestTreeEvalGoldenVectors` (Go vs Python, |Δp| < 1e-9), `TestTreeNaNTakesDefault`, `TestConformalEmptyAbstains`, `TestQuantileMatchesPython`, `TestAbstentionNeverMarks`, `FuzzCompileRule`.
 
 **Acceptance.**
 - Every QoSmate rule example from its README compiles and passes `nft -c`.
@@ -1022,20 +993,12 @@ func Quantile(scores []float64, alpha float64, minN int) (float64, bool) {
 package lease
 
 type Lease struct {
-    ID, Device, Owner string // Owner = rpcd user, for the audit log
-    Class             model.Class // IV (default) or RT
-    Start, Expires    time.Duration // monotonic
-    WallExpiry        time.Time
-    BootID            string
-    Renewed           bool
+    ID, Device, Owner string        // Owner = rpcd user, for the audit log
+    Class             model.Class   // IV (default) or RT
+    Expires           time.Duration // monotonic
+    WallExpiry        time.Time     // + BootID, for restore after reboot
 }
-type Request struct {
-    Device   string
-    Class    model.Class
-    Minutes  int // 15, 30, 60, 120; max 240
-    Owner    string
-    Session  Session // role + expiry from rpcd
-}
+type Request struct{ /* device, class, minutes (≤ 240), owner, rpcd session */ }
 type Table struct{ /* active leases, device map */ }
 func (t *Table) Propose(r Request, now time.Duration) (model.Action, error) // LEASE_GRANT
 func (t *Table) Commit(a model.Action) Lease       // after ACCEPT + nft success
@@ -1046,7 +1009,7 @@ func (t *Table) Checkpoint(path string) error      // every 60 s, atomic
 func Restore(path string, ntpSynced bool, bootID string, now time.Duration) (*Table, error)
 ```
 
-**Internal design.** Each lease becomes elements of `@lease_rt4/6` or `@lease_iv4/6` with **timeout = remaining time**, so the kernel expires it even if `veriqd` is down. When a device's addresses change, the elements are re-rendered with the remaining time. On restore after a reboot, a lease resumes only if NTP is synced. The remaining time is recomputed from `WallExpiry` and is never extended.
+**Internal design.** Each lease becomes elements of `@lease_rt4/6` or `@lease_iv4/6` with **timeout = remaining time**, so the kernel expires it even with `veriqd` down. Address changes re-render the elements with the remaining time. After a reboot a lease resumes only if NTP is synced, and its time is never extended.
 
 **Errors.** A checker refusal (`AUTH`, `ADMISSION`, `COLLAPSE`) is returned to the caller with the reason, which the household page shows. A failed nft update rolls back the in-memory commit.
 
@@ -1080,8 +1043,8 @@ func (b *Book) Save(path string) error // sanctions.json, ≤ 1 write/min
 ```
 
 **Internal design.**
-- **Escalation.** The timeout doubles per offence within 1 h (60, 120, 240 … s), capped at 15 min, and the count resets after 1 h clean. The book is keyed by conntrack ID, the same key as the kernel's `@sanctioned` set, so a reconnecting application starts a fresh count. That is a known limitation, to be revisited with the O9 tuning data.
-- **Standing queue.** Detection uses the CAKE per-tin peak delay and backlog. The top contributing flow is sanctioned with a conntrack mark update plus a set add.
+- **Escalation.** The timeout doubles per offence within 1 h (60, 120, 240 … s), capped at 15 min; the count resets after 1 h clean. The book is keyed by conntrack ID, like the kernel's `@sanctioned` set, so a reconnecting app starts a fresh count (a known limitation; revisit with O9 data).
+- **Standing queue.** Uses CAKE per-tin peak delay and backlog; the top contributing flow gets a conntrack mark update plus a set add.
 
 **Errors.** A sanction for a flow that no longer exists is dropped silently. Escalation proposals are checked (`NO_VIOLATION`, `CAP_EXCEEDED`).
 
@@ -1467,12 +1430,7 @@ func checkEscalate(a m.Action, cfg Limits) m.Verdict {
 
 Chapter 12 gives a worked example for every refusal code; each example becomes one row of `TestCheckRefusals`.
 
-**State matrix.** The state permissions in `permits` follow docs/11 §5.2 and §8.2:
-- SHADOW keeps deterministic user configuration active (leases, rulesets, envelope escalation) but never applies rate or ML actions;
-- SAFE and INIT accept only rulesets (SAFE only the SAFE set);
-- DEGRADED and DISABLED accept only the always-admissible actions.
-
-The handling of HOLD_LINKDOWN (leases and rulesets allowed, rates frozen) is an **implementation choice** consistent with "frozen rates", to be confirmed in review.
+**State matrix.** `permits` follows docs/11 §5.2 and §8.2: SHADOW keeps user configuration active (leases, rulesets, escalation) but applies no rate or ML action; SAFE and INIT accept only rulesets (SAFE only the SAFE set); DEGRADED and DISABLED accept only the always-admissible actions. HOLD_LINKDOWN (leases and rulesets allowed, rates frozen) is an **implementation choice**, to be confirmed in review.
 
 **Errors.** None: a refusal is a value. A malformed payload (wrong type) yields the most conservative refusal for that action type.
 
@@ -1487,7 +1445,7 @@ The handling of HOLD_LINKDOWN (leases and rulesets allowed, rates frozen) is an 
 
 ## enforce
 
-**Purpose.** The only package that changes kernel state. It renders the desired state into `tc` batches and an `nft` ruleset for the `cake`, `hfsc` and `htb` backends (docs/11 §4.3), applies accepted actions in a valid order, and reads every step back.
+**Purpose.** The only package that changes kernel state: it renders `tc` batches and the `nft` ruleset for the `cake`, `hfsc` and `htb` backends (docs/11 §4.3), applies accepted actions in a valid order and reads every step back.
 
 **Public API.**
 
@@ -1510,12 +1468,11 @@ func Validate(ctx context.Context, r Runner, ruleset string) error // nft -c -f 
 ```
 
 **Internal design.**
-- CAKE rate changes are a single `tc qdisc change … bandwidth X`.
-- HFSC/HTB changes apply the root class first, then the leaves scaled proportionally, reading back after each step (docs/11 §4.3).
-- `Apply` keeps the set of applied action IDs and the current version. It refuses an action whose verdict is not ACCEPT, or whose version is not the current one.
-- nft rulesets are applied with `nft -f -` as one transaction and carry the comment `veriq:vN`.
+- CAKE: one `tc qdisc change … bandwidth X`. HFSC/HTB: root class first, then leaves scaled proportionally, each step read back.
+- `Apply` refuses an action without ACCEPT, with a stale version, or with an already-applied ID.
+- nft rulesets go in one `nft -f -` transaction and carry the comment `veriq:vN`.
 
-**Errors.** If a step fails, `Apply` runs the compensating step (restore the previous rate), and after 3 capped retries it returns `ErrPartial`, which sends the state machine to SAFE.
+**Errors.** A failed step is compensated (previous rate restored); after 3 capped retries `ErrPartial` sends the state machine to SAFE.
 
 **Tests.** Golden render files per backend and link preset, `TestCakeRateChangeSingleCommand`, `TestHFSCOrderRootFirst`, `TestApplyRefusesWithoutAccept`, `TestApplyRefusesDuplicateID`, `TestCompensateOnPartialFailure` (fake runner), and netns tests that install each backend and pass the tin self-test.
 
@@ -1538,8 +1495,7 @@ func (r *Reconciler) Adopt(ctx context.Context, persisted uint64) (bool, error)
 ```
 
 **Internal design.**
-- Ownership is recognised by the nft comment `veriq:vN`, the reserved qdisc handles and `ifb-veriq` (docs/09 A.5).
-- Observed parameters (rates, overhead, fwmark) are compared field by field, not as text, so formatting differences between iproute2 versions do not trigger false alarms.
+Ownership is recognised by the comment `veriq:vN`, the reserved qdisc handles and `ifb-veriq` (docs/09 A.5). Observed parameters (rates, overhead, fwmark) are compared field by field, not as text, so iproute2 formatting differences raise no false alarms.
 
 **Errors.** A missing table is re-applied within one tick (A31). A foreign qdisc gives `Foreign`, and the state goes to DEGRADED with no retries.
 
@@ -1565,7 +1521,7 @@ func WriteAtomic(path string, v any) error // temp file, fsync, rename
 type Limiter struct{ /* per-file minimum interval: 1 min or 1 h */ }
 ```
 
-**Internal design.** Transitions are one table of (state, event) → state, so a test can enumerate every pair. veriqd writes `/var/run/veriq/safe.env` on every rate change and touches the heartbeat every 1 s for the watchdog.
+**Internal design.** Transitions are one (state, event) → state table, so a test enumerates every pair. veriqd writes `/var/run/veriq/safe.env` on each rate change and touches the heartbeat every 1 s for the watchdog.
 
 **Errors.** An invalid transition is ignored and logged. A failed persistent write keeps RAM state and retries at the next allowed interval.
 
@@ -1592,9 +1548,8 @@ func Explain(r Receipt, lang string) string // English and Hindi templates
 ```
 
 **Internal design.**
-- IMPROVED needs the median D after < 0.7 × before, and Ĝ not reduced by more than the cut.
-- INCONCLUSIVE covers a concurrent change, a load change > 30%, a link event, or fewer than 20 samples.
-- The band between "not reduced" and "reduced by 30%" is not named in docs/11. It is treated as INCONCLUSIVE, which also leads to undo of a fallback step. Every receipt states association, not causation.
+- IMPROVED: median D after < 0.7 × before, and Ĝ not reduced by more than the cut. INCONCLUSIVE: a concurrent change, a load change > 30%, a link event, or < 20 samples.
+- A reduction of less than 30% is not named in docs/11; it is treated as INCONCLUSIVE, which also undoes a fallback step. Receipts state association, not causation.
 
 **Errors.** A receipt whose window is interrupted (restart) is closed as INCONCLUSIVE.
 
@@ -1630,7 +1585,7 @@ func (s *Server) Serve(ctx context.Context, path string) error
 
 **Public API.** `QoSmate(r io.Reader) (*config.Config, Report, error)` and `SQM(r io.Reader) (*config.Config, Report, error)`. `veriqctl import qosmate --dry-run` prints the report only.
 
-**Internal design.** Rules, IP sets and rate limits map one to one. `ROOT_QDISC hybrid` maps to `hfsc` with a warning, because hybrid is deferred (O1). Legacy port lists become rules. Autorate rates become the envelope only after a warning, since VeriQ's floor rule differs.
+**Internal design.** Rules, IP sets and rate limits map one to one; legacy port lists become rules. `ROOT_QDISC hybrid` maps to `hfsc` with a warning (O1). Autorate min/base/max rates are reported, not copied, because VeriQ's floor rule differs.
 
 **Tests.** Golden files for every README example, `TestHybridWarns`, `TestDryRunWritesNothing`.
 

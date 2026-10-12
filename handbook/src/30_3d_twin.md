@@ -42,7 +42,7 @@ These rules extend the 3D replay rules in docs/09 §7 and the visual encodings i
 
 ![3D twin scene layout sketch.](figures/fig16_twin.svg)
 
-The scene reads left to right, the same way the traffic flows: the home, the router, the access link, the provider's first hop, then the internet. The camera's default view is a three-quarter view from above, so every element is visible at once.
+The scene reads left to right, as traffic flows: home, router, access link, the provider's first hop, the internet. The default camera is a three-quarter view from above.
 
 ### Layout
 
@@ -108,7 +108,7 @@ The scene reads left to right, the same way the traffic flows: the home, the rou
 | Replay converter | Python (in `twin/tools/`) | Same language as the lab and evaluator | — |
 | Live bridge | Python with the `websockets` package | Small; runs on the hub laptop | Node.js |
 
-All front-end dependencies are MIT-licensed; check each licence when adding a package, and pin exact versions with `npm install --save-exact`, so `package-lock.json` fixes the build. The twin is built to static files (`twin/dist/`) and opened from the hub laptop with no internet access.
+Check each package's licence when adding it (the front-end packages above are MIT), and pin exact versions with `npm install --save-exact`. The twin builds to static files (`twin/dist/`) that open on the hub laptop with no internet access.
 
 > **Why it matters.** A twin that needs internet access, a cloud service or the router's CPU would contradict the design: control is local, and the router does nothing but route. The twin is a separate, off-box viewer.
 
@@ -642,7 +642,7 @@ The router serves no WebSocket and gains no new listener. A small bridge on the 
 - **Default (P1):** rpcd over HTTP. The bridge logs in as a read-only rpcd user whose ACL allows only status, queue statistics, autorate state and recent events (Chapter 21 defines the methods). This is the path LuCI itself uses.
 - **When the exporter exists (P2):** scrape the Prometheus text endpoint on the LAN (default port 9567) for counters, and use rpcd only for events.
 
-The bridge writes every frame it sends to `live.twin.jsonl`. A live demo can therefore be replayed afterwards, frame for frame, and filed in the ledger.
+The bridge writes every frame it sends to `live.twin.jsonl`, so a live demo can be replayed afterwards and filed in the ledger.
 
 Live streams have `"source":"router"` in their header, so truth frames are refused. On the physical kit, a separate `truth` channel from the ISP emulator may be enabled; the header then says `"source":"lab-live"` and the legend shows the truth tag.
 

@@ -154,7 +154,7 @@ procd's respawn parameters `3600 5 5` mean: a run shorter than 3600 s counts as 
 | Interface events | hotplug `30-veriq` → `veriqd` | Event over the local socket on WAN ifup/ifdown | If veriqd is down, the script does nothing; the kernel config persists |
 | Kernel write | `veriqd` → kernel | `nft -f -`, `tc -batch -` as processes | root, owned objects only |
 | Kernel read | kernel → `veriqd` | `tc -s -j`, `nft -j`; conntrack and NFLOG via netlink; raw ICMP sockets | root |
-| Watchdog | `veriqd` → `veriq-watchdog` | Files: `/var/run/veriq/heartbeat` (mtime), `/var/run/veriq/safe.env` (SAFE rates) | RAM filesystem, root |
+| Watchdog | `veriqd` → `veriq-watchdog` | Files: `/var/run/veriq/heartbeat` (monotonic uptime value), `/var/run/veriq/safe.env` (SAFE rates) | RAM filesystem, root |
 | Metrics | exporter → LAN scraper | Prometheus text, default port 9567 | Opt-in package; LAN zone only |
 | Alerts | `veriqd` → user endpoint | JSON POST webhook | Opt-in; at most 1 per 5 min per alert type |
 
@@ -224,7 +224,7 @@ Each flow is a numbered list of steps. Chapter 21 gives the full sequence diagra
 ### Watchdog to SAFE
 
 1. veriqd stops touching `/var/run/veriq/heartbeat` (crash, hang or `kill -9`).
-2. The watchdog checks the heartbeat mtime every 2 s.
+2. The watchdog reads the heartbeat value (monotonic uptime) every 2 s and compares it with `/proc/uptime`.
 3. When the heartbeat is more than 10 s old and the state is not DISABLED, it runs `tc qdisc change` with the SAFE rates from `safe.env`: static CAKE at 0.85 × min(S_lkg, S_base). Rules and leases stay in place.
 4. It logs to syslog and writes `state=SAFE`. The target time-to-safe is ≤ 12 s.
 5. procd respawns veriqd. On start, the reconciler finds the SAFE configuration, does not adopt the old LIVE state, and moves SAFE → INIT.
@@ -333,7 +333,7 @@ Each ADR records the context, the decision, its consequences and the main altern
 ### ADR-10: Watchdog as a separate procd instance in POSIX shell
 
 - **Context.** The watchdog must survive any failure of veriqd, including a bug in Go code shared by the daemon.
-- **Decision.** Run `veriq-watchdog` as a second procd instance of `/etc/init.d/veriq`. It is a small POSIX shell loop that reads the heartbeat mtime every 2 s and applies SAFE rates from `safe.env` after 10 s of silence (C11).
+- **Decision.** Run `veriq-watchdog` as a second procd instance of `/etc/init.d/veriq`. It is a small POSIX shell loop that reads the heartbeat's monotonic uptime value every 2 s and applies SAFE rates from `safe.env` after 10 s of silence (C11).
 - **Consequences.** A separate failure domain with almost no code to go wrong, and no dependency on the daemon's libraries. It can only install SAFE; it does not try to fix anything else.
 - **Rejected.** A goroutine inside veriqd (shares the failure domain); systemd (not available on OpenWrt; still used for D1 on Ubuntu).
 

@@ -1,37 +1,25 @@
 # Datapath templates
 
-This chapter is the working reference for the person who owns role R1 (Datapath & OpenWrt). It turns the queue-management and classification design (docs/11 §4–§5) into concrete kernel configuration: the conntrack mark layout, the complete nftables ruleset for table `inet veriq`, the tc (traffic control, from iproute2) templates for the three queue backends in both directions, the read-back fields veriqd parses, and one worked render from a sample configuration.
+This chapter is the working reference for role R1 (Datapath & OpenWrt). It turns docs/11 §4–§5 into concrete kernel configuration: the conntrack mark layout, the complete nftables (nft) ruleset for table `inet veriq`, the tc (traffic control, iproute2) templates for the three queue backends in both directions, the read-back fields veriqd parses, and one worked render.
 
-Everything here is a **template that veriqd renders**. veriqd fills it from the UCI (Unified Configuration Interface, OpenWrt's config system) file `/etc/config/veriq`, checks it, and applies it. The team should not hand-edit the kernel state on a running router. Every number in this chapter is a **starting parameter** from docs/11 or a **rendering assumption** labelled as such. None is a measured result.
+Everything here is a **template that veriqd renders** from `/etc/config/veriq` (UCI, OpenWrt's Unified Configuration Interface), checks and applies; nobody hand-edits kernel state on a running router. Every number is a **starting parameter** from docs/11 or a labelled **rendering assumption**, never a measured result.
 
-> **Note.** All of this was written from the specification and the manual pages, not from a running router. Anything whose exact syntax must be checked on the target versions (OpenWrt 24.10, its nft and iproute2 builds, kernel 6.6) is tagged **[verify]**. The list of [verify] items is collected into a Stage-1 checklist at the end of the chapter.
+> **Note.** This was written from the specification and the manual pages, not from a running router. Syntax that must be checked on the target (OpenWrt 24.10, its nft and iproute2 builds, kernel 6.6) is tagged **[verify]** and collected in the Stage-1 checklist at the end.
 
 ## Conventions
 
-- **Placeholders.** veriqd renders the templates with Go's `text/template`, so placeholders look like `{{.UpKbit}}`. nftables variables (`define NAME = …`, used as `$NAME`) are part of the rendered output. They make the ruleset readable; they are not placeholders.
-- **Units.** tc rates are in `kbit` (1 kbit = 1000 bit/s). nft byte rates are written in exact `bytes/second`. The renderer never uses nft's `kbytes`, because that unit is 1024 bytes and would introduce rounding.
-- **Wrapped lines.** A long nft rule that ends in ` \` is wrapped for print only. The renderer emits it as one line. (tc batch files and shell accept a trailing backslash natively.)
-- **Directions.** "Upload" or "egress" means LAN → WAN, shaped on the WAN device. "Download" or "ingress" means WAN → LAN, shaped on the IFB (Intermediate Functional Block) device `ifb-veriq`.
-- **Names.** The WAN device is `eth1` in the examples (the USB 3 GbE adapter of the Raspberry Pi reference router, D3). It is illustrative: veriqd resolves the device from netifd at run time.
+- **Placeholders** are Go `text/template` fields such as `{{.UpKbit}}`. nft `define NAME = …` variables (used as `$NAME`) are part of the rendered output, for readability.
+- **Units.** tc rates are in `kbit` (1000 bit/s). nft byte rates are exact `bytes/second`; the renderer never uses nft's `kbytes` (1024 bytes).
+- **Wrapped lines.** An nft rule ending in ` \` is wrapped for print only; the renderer emits one line. tc batch files accept the backslash natively.
+- **Directions.** Upload (egress) is shaped on the WAN device; download (ingress) on the IFB (Intermediate Functional Block) device `ifb-veriq`. The WAN device is `eth1` in the examples (illustrative; resolved from netifd at run time).
 
-### Inventory of owned kernel objects
-
-| Object | Kind | Created by | Survives a config reload? | Removed on uninstall/DISABLED |
-|---|---|---|---|---|
-| `table inet veriq` | nftables table (chains, sets, meters) | `enforce` nft renderer | Rules: re-rendered. Runtime sets: kept | Yes |
-| `table inet veriq_custom` | User's custom table from `/etc/veriq.d/custom.nft` | `enforce` (validated copy) | Re-applied | Yes |
-| Root qdisc on WAN (`handle 1:`) | CAKE, HFSC or HTB | `enforce` backend | Changed in place | Yes |
-| Ingress qdisc on WAN (`ffff:`) + matchall filter | ctinfo + mirred actions | `enforce` backend | Kept | Yes |
-| `ifb-veriq` + its root qdisc | IFB link + CAKE/HFSC/HTB | `enforce` backend | Kept; rates changed in place | Yes |
-| `/var/run/veriq/safe.env`, `safe.tc` | SAFE rates for the watchdog | `enforce` after every rate change | Rewritten | Yes |
-
-docs/09 A.5 asks for owned qdiscs to be recognisable. The templates use the root handle `1:` shown in the docs/11 §4.1 class table. Ownership is then decided by comparing the observed objects with the persisted desired document, not by the handle alone. If the team prefers a distinctive major number (for example `7e1:`), it is one constant in the renderer; the class minors (`:11`…`:15`) do not change.
+**Owned objects.** VeriQ owns exactly: table `inet veriq` (and the user's `inet veriq_custom`), the root qdisc on WAN, the ingress qdisc and matchall filter on WAN, `ifb-veriq` and its root qdisc, and `/var/run/veriq/safe.env` (plus `safe.tc` for HFSC/HTB). The templates use root handle `1:` as in the docs/11 §4.1 class table; ownership is decided by comparing observed objects with the persisted desired document (docs/09 A.5). A distinctive major (for example `7e1:`) is one renderer constant if the team prefers it.
 
 ## The conntrack mark layout
 
 ![Conntrack mark bit layout: CLASS in bits 24–26, PROV in bits 27–29, SANCT in bit 30; bits 0–23 and 31 are never touched.](figures/fig05_markbits.svg)
 
-Every connection tracked by the kernel (conntrack) has a 32-bit mark. VeriQ stores its whole classification decision in seven of those bits (docs/11 §4.2, change C14). The class therefore follows the *connection*, not the packet, so a single decision covers both directions and survives DSCP (Differentiated Services Code Point) washing.
+Each conntrack (connection tracking) entry has a 32-bit mark. VeriQ stores its whole classification decision in seven of those bits (docs/11 §4.2, C14), so the class follows the *connection*: one decision covers both directions and survives DSCP (Differentiated Services Code Point) washing.
 
 | Field | Bits | Mask | Shift | Values |
 |---|---|---|---|---|
@@ -40,11 +28,11 @@ Every connection tracked by the kernel (conntrack) has a 32-bit mark. VeriQ stor
 | SANCT | 30 | `0x40000000` | 30 | 1 = envelope violation, forced to BE |
 | Not VeriQ's | 0–23, 31 | `0x80FFFFFF` | — | Never written. mwan3 uses `0x3F00` by default, pbr `0x00FF0000` |
 
-CLASS uses the four VeriQ service classes: RT (realtime), IV (interactive video), BE (best effort) and BK (bulk). The CLASS values 1–4 are chosen so that, after shifting, they equal the CAKE (Common Applications Kept Enhanced) `fwmark` tin numbers for `diffserv4` in tc's display order (Bulk, Best Effort, Video, Voice). The Stage-1 tin self-test is the authority on that mapping (open decision O2), not this table.
+CLASS uses the four service classes RT (realtime), IV (interactive video), BE (best effort) and BK (bulk). Values 1–4 equal the CAKE (Common Applications Kept Enhanced) `fwmark` tin numbers for `diffserv4` in tc's display order (Bulk, Best Effort, Video, Voice); the Stage-1 tin self-test is the authority on that mapping (O2).
 
 ### The mark cookbook (constants used by every template)
 
-Because each field is a constant in a given rule, the renderer never needs to combine two registers. Every write is "clear the VeriQ bits, then OR a constant".
+Every write is "clear the VeriQ bits, then OR a constant", so no rule ever combines two registers.
 
 | Name | Value | Meaning |
 |---|---|---|
@@ -66,16 +54,11 @@ Because each field is a constant in a given rule, the renderer never needs to co
 - Set the lease RT value: `0x00003F00 | 0x34000000 = 0x34003F00`.
 - Decode: CLASS = `(0x34003F00 >> 24) & 7 = 0x34 & 7 = 4` (RT). PROV = `(0x34003F00 >> 27) & 7 = 0b110 = 6` (lease). SANCT = `(m >> 30) & 1 = 0`. mwan3's `0x3F00` is untouched.
 
-**Example 2: a user-rule RT flow violates its envelope.** The stored mark is `0x2C003F00` (user rule, RT).
-- Keep PROV, clear CLASS and SANCT: `0x2C003F00 & 0xB8FFFFFF = 0x28003F00`.
-- OR in the sanction: `0x28003F00 | 0x42000000 = 0x6A003F00`.
-- Decode: `0x6A = 0110 1010₂`. Bit 30 is set (sanctioned), CLASS = `0x6A & 7 = 2` (BE), PROV = `(0x6A >> 3) & 7 = 5` (user rule). Keeping PROV lets the explain API say *which* basis was sanctioned.
+**Example 2: a user-rule RT flow violates its envelope, then recovers.** The stored mark is `0x2C003F00`. Keep PROV, clear CLASS and SANCT: `& 0xB8FFFFFF = 0x28003F00`; OR the sanction: `| 0x42000000 = 0x6A003F00`. Decode `0x6A = 0110 1010₂`: bit 30 set, CLASS = `0x6A & 7 = 2` (BE), PROV = `(0x6A >> 3) & 7 = 5`, so the explain API can say which basis was sanctioned. When the penalty expires the kernel clears all three fields (`& 0x80FFFFFF = 0x00003F00`) and the flow is re-classified from scratch.
 
-**Example 3: recovery.** After the penalty expires the kernel clears all three fields: `0x6A003F00 & 0x80FFFFFF = 0x00003F00`. The flow then falls through the pipeline again and is re-classified from scratch.
+**Example 3: the download path.** On WAN ingress, `act_ctinfo cpmark 0x7f000000` sets the packet (skb) mark to `ct mark & 0x7F000000`, replacing it rather than merging (kernel behaviour **[verify]** with tc-ctinfo(8) [R7]). For the sanctioned flow that is `0x6A000000`; CAKE on `ifb-veriq` with `fwmark 0x07000000` computes `(0x6A000000 & 0x07000000) >> 24 = 2`: Best Effort.
 
-**Example 4: the download path.** On WAN ingress, `act_ctinfo cpmark 0x7f000000` sets the packet (skb) mark to `ct mark & 0x7F000000`. For the sanctioned flow that gives `0x6A000000`; the mwan3 bits are not copied, because the action replaces the packet mark with the masked value (kernel `act_ctinfo` behaviour **[verify]** against tc-ctinfo(8) [R7]). CAKE on `ifb-veriq` with `fwmark 0x07000000` computes `(0x6A000000 & 0x07000000) >> 24 = 2`, which selects Best Effort.
-
-The renderer and the explain API share one small Go helper, so the constants exist in exactly one place:
+The renderer and the explain API share one helper, so the constants exist in one place:
 
 ```go
 package model
@@ -103,7 +86,7 @@ func Decode(m uint32) (Class, Prov, bool) {
 }
 ```
 
-> **Why it matters.** Precedence is enforced **in the kernel** by comparing PROV values. A rule may overwrite the class only when its own provenance is higher than the stored one. There is no round trip to the daemon on the packet path (principle P1), and a crashed daemon cannot leave a half-applied priority (P8).
+> **Why it matters.** Precedence is enforced **in the kernel** by comparing PROV values: a rule may overwrite the class only when its own provenance is higher. No packet waits for the daemon (P1), and a crashed daemon cannot leave a half-applied priority (P8).
 
 ## Ruleset structure
 

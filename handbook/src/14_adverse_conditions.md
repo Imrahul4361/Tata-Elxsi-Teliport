@@ -34,17 +34,17 @@ The following facts come from `etc/qosmate-autorate.sh` and `etc/init.d/qosmate-
 
 - **Q1. Timing.** The loop interval is 500 ms by default. Latency is measured on every second loop (about once per second), with one `ping -c 1 -W 1` per reflector, in sequence. The default reflectors are 1.1.1.1, 8.8.8.8 and 9.9.9.9.
 - **Q2. Aggregation.** Latency is the arithmetic **mean** of the RTTs (round-trip times) of the reflectors that replied.
-- **Q3. No reply.** If no reflector replies, the measurement function returns 9999 ms. The main loop then **substitutes the last good latency value** (if one exists), counts the failure, logs a warning every 5 failures, and does not update the baseline.
+- **Q3. No reply.** If no reflector replies, the measurement function returns 9999 ms. The main loop then **substitutes the last good latency value** (if one exists), counts the failure, logs a warning every 5 failures, and does not update the baseline. Before any good sample exists (for example right after a restart), the rate logic does not run at all, because it waits for 5 baseline samples (Q4).
 - **Q4. Baseline.** The mean of the first 10 samples. After that it is updated only when both directions run below 50% of their current rates, as a 0.9/0.1 moving average that is **accepted only if lower**. Rate logic starts after 5 baseline samples.
 - **Q5. Decrease.** If the delta (latency − baseline) exceeds 10 ms and ≥ 1 s has passed since the last change, the rate is multiplied by 0.85. **The decrease branch has no load condition.**
 - **Q6. Increase.** If load ≥ 75%, delta < 5 ms and ≥ 3 s have passed since the last change, the rate is multiplied by 1.02.
 - **Q7. Drift.** Otherwise, at load < 50%, the rate moves toward base by ×0.98 (from above) or ×1.01 (from below) on each loop.
 - **Q8. Envelope.** Rates are clamped to 25%–105% of the configured rate (overridable).
-- **Q9. Directions.** Both directions use the **same** latency value. A direction heuristic cancels a reduction of a direction whose load is < 50% while the other direction's load is ≥ 75%.
+- **Q9. Directions.** Both directions use the **same** latency value. A direction guard cancels a reduction of a direction whose load is < 50% while the other direction's load is ≥ 75%.
 - **Q10. Throughput.** Achieved rates come from interface byte counters (WAN for upload, IFB for download).
 - **Q11. Lifecycle.** procd runs the daemon with `respawn 3600 5 5`. The loop exits if the WAN device or the IFB disappears. On start, rates are restored from a state file in `/tmp` if it is ≤ 300 s old.
 
-> **Note.** docs/11 §10 summarises Q3 as "latency is set to 9999 ms". That is true of the measurement function, but the pinned main loop then substitutes the last good value. Likewise, docs/11 states that both directions cut on the same RTT; the direction heuristic (Q9) narrows that. The hypotheses for A6, A9 and A14 below are refined accordingly. Maintainers may change their code at any time, so re-read the source at the pinned commit before publishing any comparison.
+> **Note.** docs/11 §10 summarises Q3 as "latency is set to 9999 ms". That is true of the measurement function, but the pinned main loop then substitutes the last good value. Likewise, docs/11 states that both directions cut on the same RTT; the direction guard (Q9) narrows that. The hypotheses for A6, A9 and A14 below are refined accordingly. These hypotheses are narrower than a naive reading of "delay-only autorate" would suggest, which is to QoSmate's credit: its author has already handled several of the obvious failure modes. Maintainers may change their code at any time, so re-read the source at the pinned commit before publishing any comparison.
 
 ## Capacity dynamics
 
@@ -86,7 +86,7 @@ The following facts come from `etc/qosmate-autorate.sh` and `etc/init.d/qosmate-
 - **Why hard:** delay rises exactly as in bufferbloat, but the queue is not ours and not on the access link. Cutting S wastes bandwidth and cannot remove the delay.
 - **Detection:** FAR rises; NEAR (the ISP's first hop) stays flat; no throughput censoring; load does not explain it. This gives REMOTE_LIKELY at L2 (L1 if the near probe is missing).
 - **Response:** **hold** S; tell the user the slowdown is beyond the provider's first hop.
-- **Delay-only autorate (hypothesis):** the decrease branch has no load check (Q5), and with both directions lightly loaded the direction heuristic (Q9) does not intervene. Expected: both directions cut ×0.85 per second to the 25% floor, staying there while the delay persists (the decrease branch takes precedence over drift), then drifting back ×1.01 per loop (Q7) after the fault ends.
+- **Delay-only autorate (hypothesis):** the decrease branch has no load check (Q5), and with both directions lightly loaded the direction guard (Q9) does not intervene. Expected: both directions cut ×0.85 per second to the 25% floor, staying there while the delay persists (the decrease branch takes precedence over drift), then drifting back ×1.01 per loop (Q7) after the fault ends.
 - **Test:** S6. Fault: `netem delay 80ms` on the emulator's link to the remote servers and far reflectors only. Ground truth: injection log; evaluator checks access utilisation < 80% and ISP queue < 5 ms.
 - **Pass (target):** inappropriate interventions (count, cumulative magnitude ∫max(0, S_ref − S(t))dt in Mbit·s, duration below 0.95·S_ref) below the comparator. This is the **primary outcome**.
 
@@ -106,7 +106,7 @@ The following facts come from `etc/qosmate-autorate.sh` and `etc/init.d/qosmate-
 - **Why hard:** the controller is blind. Missing data must not be read as "infinite delay" or as "zero delay".
 - **Detection:** quorum < 2 healthy reflectors → delay signal MISSING → L0, PROBE_FAULT.
 - **Response:** hold the current S; DEGRADED after 60 s; behave as static CAKE until probes return. Recovery needs no manual action.
-- **Delay-only autorate (hypothesis):** per Q3, it continues on the **last good latency**. If that sample was in the alarm zone (delta > 10 ms, plausible when an outage is preceded by rising delay), the decrease branch would fire every second down to the floor. If it was low and load ≥ 75%, ×1.02 raises would continue blind. Otherwise rates drift toward base. Expected: behaviour depends on the last sample before the outage.
+- **Delay-only autorate (hypothesis):** per Q3, it continues on the **last good latency**. If the outage began at normal delay, no cut follows: the rate stays put (or, on the frozen value, keeps the increase or drift behaviour of Q6–Q7). The decrease branch keeps firing every second, down to the floor, only if the last good value was already elevated (delta > 10 ms), which is plausible when an outage is preceded by rising delay. Before any good sample exists, the rate logic does not run (Q3). The hypothesis is therefore narrow: cuts are expected only for outages that start during a delay episode, and A6 should include that variant.
 - **Test:** A6. Fault: emulator drops all ICMP to the reflectors (both echo and timestamp), with bulk traffic running. Ground truth: injection log.
 - **Pass (target):** S stays within ±5% of its pre-fault value; recovery without manual action.
 
@@ -138,8 +138,8 @@ The following facts come from `etc/qosmate-autorate.sh` and `etc/init.d/qosmate-
 - **Why hard:** with RTT probes alone, an upload queue and a download queue look the same.
 - **Detection:** ICMP-timestamp one-way deltas show the rise in the up direction; without them, load attribution (C9): only a direction with load ≥ 60% may be blamed.
 - **Response:** if the upstream queue is ours, CAKE handles it (OWN_QUEUE). If it is beyond our shaper, cut **upload only**.
-- **Delay-only autorate (hypothesis):** one latency drives both directions (Q9). The direction heuristic protects the download when its load is < 50% and upload load is ≥ 75%, so in a pure upload-saturation case **parity is expected**. Collateral download cuts are expected only at intermediate download load (50–75%).
-- **Test:** S4, plus a variant with download load at 60%. Fault: bulk upload during a call. Ground truth: emulator per-direction queues.
+- **Delay-only autorate (hypothesis):** one latency drives both directions, but the direction guard (Q9, read) does not reduce the download while its load is < 50% and the upload's load is ≥ 75%. In a pure upload-saturation case **parity is expected**. Collateral download cuts are possible only when the download's load is ≥ 50%, or when the saturated upload reads below 75% load (for example when its queue builds beyond the shaper before the shaper is full).
+- **Test:** S4. Fault: bulk upload during a call; variants with download load at 60% and with upload load held near 70%. Ground truth: emulator per-direction queues.
 - **Pass (target):** download S unchanged (±5%); upload delay p95 ≤ comparator.
 
 ### A10: 500-flow BitTorrent plus a call
@@ -190,7 +190,7 @@ The following facts come from `etc/qosmate-autorate.sh` and `etc/init.d/qosmate-
 - **Why hard:** every probe fails during the outage, and the near target may change.
 - **Detection:** netifd hotplug events (ifdown/ifup), carrier state.
 - **Response:** HOLD_LINKDOWN: freeze rates, pause probes, do not count losses as evidence. On ifup: re-resolve the near target, re-qualify reflectors, resume at the capacity-memory start rate, return to LIVE after 10 s of healthy probes.
-- **Delay-only autorate (hypothesis):** for a PPPoE device that disappears, the loop exits (Q11) and procd respawns it; whether repeated exits during a long reconnect exhaust the respawn retries is a hypothesis (we did not read QoSmate's hotplug handling). After a restart, the baseline re-learns from its first 10 samples (Q4); if they are taken under load, the baseline is inflated. For a device that persists, failed probes fall under Q3.
+- **Delay-only autorate (hypothesis):** for a PPPoE device that disappears, the loop exits (Q11) and procd respawns it; whether repeated exits during a long reconnect exhaust the respawn retries is a hypothesis (we did not read QoSmate's hotplug handling). After a restart, the baseline re-learns from its first 10 samples (Q4); if they are taken under load, the baseline is inflated. For a device that persists, failed probes fall under Q3: no cut unless delay was already elevated when the outage began. Expected difference from VeriQ is therefore narrow and lies in the restart path, not in the outage itself.
 - **Test:** A14. Fault: `ifdown wan` / `ifup wan` on the OpenWrt VM, or a PPPoE server restart in the emulator, under load. Ground truth: event log.
 - **Pass (target):** no cut during the outage; ≥ 90% of the pre-event rate within 30 s under load.
 
@@ -229,7 +229,7 @@ The following facts come from `etc/qosmate-autorate.sh` and `etc/init.d/qosmate-
 - **Situation:** a router without a real-time clock boots with a wrong time, then NTP steps it by an hour.
 - **Why hard:** timers based on wall time fire too early or never.
 - **Detection:** not needed: all control timing uses `CLOCK_MONOTONIC`; wall time is only for logs and lease restoration.
-- **Response:** no effect. The watchdog heartbeat should also use monotonic uptime (the safety chapter's recommended refinement), because a file mtime follows the wall clock.
+- **Response:** no effect. The watchdog heartbeat also uses monotonic uptime (docs/11 §8.4), because a file mtime would follow the wall clock.
 - **Delay-only autorate (hypothesis):** QoSmate reads time from `/proc/uptime` (read), so **parity is expected**.
 - **Test:** A18 in the OpenWrt VM (a netns shares the host's wall clock). Fault: `date -s` ±1 h. Ground truth: step timestamp.
 - **Pass (target):** no spurious events.
@@ -344,7 +344,7 @@ The following facts come from `etc/qosmate-autorate.sh` and `etc/init.d/qosmate-
 - **Why hard:** at idle no queue of ours exists, so any delay change has another cause.
 - **Detection:** censoring rules: no demand, no THR; direction attribution blames no direction under 60% load.
 - **Response:** no cut on delay at idle; DRIFT toward base. Fallback steps also require load ≥ 60%.
-- **Delay-only autorate (hypothesis):** the decrease branch (Q5) can still fire on delay at idle, and the direction heuristic does not block it when both directions are idle.
+- **Delay-only autorate (hypothesis):** the decrease branch (Q5) has no load check, and the direction guard (Q9) does not apply when both directions are idle, so delay alone can trigger cuts at idle (read facts; the effect is the hypothesis).
 - **Test:** A29. Fault: delay variation on reflector paths with no traffic. Ground truth: injection log.
 - **Pass (target):** zero cuts at load < 10%.
 
