@@ -801,12 +801,10 @@ func (c *Controller) EndEpisode(d m.Dir, now time.Duration) {
 ```
 
 Points that are easy to get wrong:
-- **The checker is authoritative.** `exploreOK` mirrors the A.4 preconditions only to avoid flooding the log with refusals. If the two disagree, the checker wins and the test suite flags the mismatch.
-- **The ledger changes only after a successful enforce and read-back** (`commit`). A refused or failed action changes nothing, so a retry is checked against the same budget.
-- **The budget is pruned by age only.** Neither the cooldown nor `EndEpisode` removes cut records, so the rolling 10-minute budget is never refunded (docs/09 A.7).
-- **SHADOW.** The real verdict is `STATE_FORBIDS` for rate actions, and `WouldBe` records what LIVE would have received. Shadow decisions are computed against the real, static S, so the shadow report compares first decisions per episode, not whole trajectories.
-- **L3.** The re-baseline to `0.90·C_measured` attaches `checker.CutPayload{CMeasured}` from the CAP test; it is omitted from the skeleton for brevity.
-- **Undo.** Undoing a fallback step whose 10-second receipt is NOT_IMPROVED or INCONCLUSIVE is proposed by `receipt` as a `RevertToRechecked` action, after conditions are re-checked.
+- **The checker is authoritative.** `exploreOK` only mirrors A.4 to avoid a flood of refusals.
+- **The ledger changes only after enforce and read-back succeed** (`commit`), and the budget is pruned **by age only**: neither the cooldown nor `EndEpisode` refunds it (docs/09 A.7).
+- **SHADOW.** Rate actions get `STATE_FORBIDS`; `WouldBe` records what LIVE would have received. Shadow decisions use the real, static S, so the shadow report compares first decisions per episode.
+- **Omitted for brevity.** The L3 re-baseline (`CutPayload{CMeasured}`) and the undo of a NOT_IMPROVED or INCONCLUSIVE fallback step, which `receipt` proposes as `RevertToRechecked`.
 
 **Errors.** An enforce error is logged with the action, and `reconcile` takes over on the next tick (compensate, retry at most 3 times, or SAFE). `Tick` itself never returns an error and never blocks.
 
@@ -821,10 +819,7 @@ Points that are easy to get wrong:
 
 ## classify
 
-**Purpose.** Everything that decides a flow's class (docs/11 §5):
-- compile user rules, IP and domain sets, device sets, app-catalogue entries and heuristics H1–H5 into the `cls_up` nft chain;
-- run the ML classifier on NFLOG samples at checkpoints k = 8, 16, 32 packets and at 10 s;
-- write a class only for a conformal singleton.
+**Purpose.** Decide a flow's class (docs/11 §5): compile user rules, sets, device and app entries and heuristics H1–H5 into the `cls_up` nft chain, and run the ML classifier at checkpoints k = 8, 16, 32 packets and 10 s, acting only on a conformal singleton.
 
 **Public API.**
 

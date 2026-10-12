@@ -212,6 +212,7 @@ table inet veriq {
 
     set wan_ifs       { type ifname; }
     set state_bypass  { typeof meta nfproto; }                         # [verify]
+    limit sample_lim  { rate 4000/second; }    # named limit shared by both families [verify]
     set trusted_dscp4 { type ipv4_addr; flags interval; {{.Trusted4Elems}} }
     set trusted_dscp6 { type ipv6_addr; flags interval; {{.Trusted6Elems}} }
     set lease_rt4 { type ipv4_addr; flags timeout; }
@@ -259,9 +260,12 @@ Points to note:
 {{if .MSS}}        tcp flags syn tcp option maxseg size > {{.MSS}} \
             tcp option maxseg size set {{.MSS}}
 {{end}}
-        # ML sampling: headers only, first 32 packets of each flow, 4000 pkt/s total
-{{if .Sampling}}        ct packets < 33 limit rate 4000/second \
+        # ML sampling: first 32 packets of each flow, fixed copy range per family,
+        # one shared 4000 pkt/s budget; veriqd zeroes every byte after the L4 header
+{{if .Sampling}}        meta nfproto ipv4 ct packets < 33 limit name "sample_lim" \
             log group 7 snaplen 40 queue-threshold 32
+        meta nfproto ipv6 ct packets < 33 limit name "sample_lim" \
+            log group 7 snaplen 60 queue-threshold 32
 {{end}}
         # Download packets were classified by act_ctinfo before shaping: meter only
         iifname @wan_ifs goto down_path
@@ -345,20 +349,24 @@ Precedence is monotonic by construction. Every rule that writes a class is guard
     chain envelope {
         iifname @wan_ifs goto envelope_dn
         ct mark & $CLASS == $C_RT update @rt_up_b { ct id \
-            limit rate over {{.RTUpBps}} bytes/second burst {{.RTUpBurst}} bytes } goto sanction
+            limit rate over {{.RTUpBps}} bytes/second burst {{.RTUpBurst}} bytes } \
+            goto sanction
         ct mark & $CLASS == $C_RT update @rt_up_p { ct id \
             limit rate over {{.RTPps}}/second burst {{.RTPpsBurst}} packets } goto sanction
         ct mark & $CLASS == $C_IV update @iv_up_b { ct id \
-            limit rate over {{.IVUpBps}} bytes/second burst {{.IVUpBurst}} bytes } goto sanction
+            limit rate over {{.IVUpBps}} bytes/second burst {{.IVUpBurst}} bytes } \
+            goto sanction
     }
 
     chain envelope_dn {
         ct mark & $CLASS == $C_RT update @rt_dn_b { ct id \
-            limit rate over {{.RTDnBps}} bytes/second burst {{.RTDnBurst}} bytes } goto sanction
+            limit rate over {{.RTDnBps}} bytes/second burst {{.RTDnBurst}} bytes } \
+            goto sanction
         ct mark & $CLASS == $C_RT update @rt_dn_p { ct id \
             limit rate over {{.RTPps}}/second burst {{.RTPpsBurst}} packets } goto sanction
         ct mark & $CLASS == $C_IV update @iv_dn_b { ct id \
-            limit rate over {{.IVDnBps}} bytes/second burst {{.IVDnBurst}} bytes } goto sanction
+            limit rate over {{.IVDnBps}} bytes/second burst {{.IVDnBurst}} bytes } \
+            goto sanction
     }
 
     chain sanction {
