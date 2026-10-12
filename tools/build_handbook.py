@@ -69,6 +69,22 @@ def shift(md, by):
     return "\n".join(out)
 
 
+def fix_lists(md):
+    """Insert the blank line pandoc needs before a list that directly follows a paragraph."""
+    out, fence = [], False
+    item = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+")
+    for line in md.splitlines():
+        if line.lstrip().startswith("```"):
+            fence = not fence
+        if not fence and item.match(line) and out:
+            prev = out[-1]
+            if prev.strip() and not item.match(prev) and not prev.startswith(("|", "#", ">")) \
+                    and not prev.startswith((" ", "\t")):
+                out.append("")
+        out.append(line)
+    return "\n".join(out)
+
+
 def part_divider(roman, title, sub):
     return (f'\n\n::: {{.part}}\n# Part {roman} · {title} {{.unnumbered .partitle}}\n\n'
             f'[{sub}]{{.partsub}}\n:::\n\n')
@@ -84,7 +100,7 @@ def assemble():
                 missing.append(n)
                 pieces.append(f"\n\n# Chapter {n} (pending)\n\nThis chapter has not been written yet.\n")
                 continue
-            pieces.append("\n\n" + read(p).strip() + "\n")
+            pieces.append("\n\n" + fix_lists(read(p).strip()) + "\n")
     pieces.append(part_divider("A–E", "Appendices", "Glossary, references, the authoritative specification, "
                                "contracts and change records"))
     gl = os.path.join(SRC, "A1_glossary.md")

@@ -23,29 +23,14 @@ Each conntrack (connection tracking) entry has a 32-bit mark. VeriQ stores its w
 
 | Field | Bits | Mask | Shift | Values |
 |---|---|---|---|---|
-| CLASS | 24–26 | `0x07000000` | 24 | 0 none (CAKE uses the packet DSCP), 1 BK, 2 BE, 3 IV, 4 RT |
+| CLASS | 24–26 | `0x07000000` | 24 | 0 none (only before a flow's first packet is classified; the qdisc then uses the packet DSCP), 1 BK, 2 BE, 3 IV, 4 RT |
 | PROV (provenance) | 27–29 | `0x38000000` | 27 | 0 none, 1 default, 2 heuristic, 3 ML, 4 app mark, 5 user rule, 6 lease, 7 system |
 | SANCT | 30 | `0x40000000` | 30 | 1 = envelope violation, forced to BE |
 | Not VeriQ's | 0–23, 31 | `0x80FFFFFF` | — | Never written. mwan3 uses `0x3F00` by default, pbr `0x00FF0000` |
 
 CLASS uses the four service classes RT (realtime), IV (interactive video), BE (best effort) and BK (bulk). Values 1–4 equal the CAKE (Common Applications Kept Enhanced) `fwmark` tin numbers for `diffserv4` in tc's display order (Bulk, Best Effort, Video, Voice); the Stage-1 tin self-test is the authority on that mapping (O2).
 
-### The mark cookbook (constants used by every template)
-
-Every write is "clear the VeriQ bits, then OR a constant", so no rule ever combines two registers.
-
-| Name | Value | Meaning |
-|---|---|---|
-| `KEEP` | `0x80ffffff` | AND-mask that clears bits 24–30 and keeps everything else |
-| `KEEP_PROV` | `0xb8ffffff` | AND-mask that clears CLASS and SANCT but keeps PROV |
-| `MKEEP` | `0xf8ffffff` | AND-mask for the *packet* mark: clears CLASS only |
-| `V_LEASE_RT` / `V_LEASE_IV` | `0x34000000` / `0x33000000` | CLASS RT or IV with PROV 6 (lease) |
-| `V_USER_RT` / `IV` / `BE` / `BK` | `0x2c…` / `0x2b…` / `0x2a…` / `0x29000000` | CLASS with PROV 5 (user rule) |
-| `V_APP_RT` / `IV` / `BK` | `0x24…` / `0x23…` / `0x21000000` | CLASS with PROV 4 (app mark) |
-| `V_ML_RT` … `V_ML_BK` | `0x1c…` … `0x19000000` | CLASS with PROV 3; written by veriqd over netlink, never by nft |
-| `V_HEUR_BK` / `V_HEUR_BE` / `V_HEUR_RESET` | `0x11…` / `0x12…` / `0x10000000` | Heuristic demotion to BK or BE, or reset to CLASS 0 (PROV 2) |
-| `V_SANCT_BE` | `0x42000000` | SANCT = 1 and CLASS = BE (OR-ed after `KEEP_PROV`) |
-| `V_SYS_RT` | `0x3c000000` | CLASS RT with PROV 7 (router-originated probes) |
+**Mark cookbook.** Every write is "clear the VeriQ bits, then OR a constant", so no rule combines two registers. Three AND-masks: `KEEP = 0x80ffffff` (clears bits 24–30), `KEEP_PROV = 0xb8ffffff` (clears CLASS and SANCT, keeps PROV) and `MKEEP = 0xf8ffffff` (packet mark: clears CLASS only). Each OR value is `CLASS << 24 | PROV << 27`: lease RT `0x34000000`, user RT `0x2c000000`, app IV `0x23000000`, ML BK `0x19000000` (written by veriqd over netlink, never by nft), heuristic BK `0x11000000`, default BE `0x0a000000` (C15), sanctioned BE `0x42000000`, system RT `0x3c000000`. Part 1 lists them all as nft defines.
 
 ### Bit arithmetic, worked
 
@@ -58,64 +43,30 @@ Every write is "clear the VeriQ bits, then OR a constant", so no rule ever combi
 
 **Example 3: the download path.** On WAN ingress, `act_ctinfo cpmark 0x7f000000` sets the packet (skb) mark to `ct mark & 0x7F000000`, replacing it rather than merging (kernel behaviour **[verify]** with tc-ctinfo(8) [R7]). For the sanctioned flow that is `0x6A000000`; CAKE on `ifb-veriq` with `fwmark 0x07000000` computes `(0x6A000000 & 0x07000000) >> 24 = 2`: Best Effort.
 
-The renderer and the explain API share one helper, so the constants exist in one place:
-
-```go
-package model
-
-const (
-	ClassMask uint32 = 0x07000000
-	ProvMask  uint32 = 0x38000000
-	SanctBit  uint32 = 0x40000000
-	Keep      uint32 = 0x80ffffff // clears bits 24-30
-	KeepProv  uint32 = 0xb8ffffff // clears CLASS and SANCT
-)
-
-// Encode returns the bits VeriQ ORs into a cleared mark.
-func Encode(c Class, p Prov, sanct bool) uint32 {
-	v := uint32(c)<<24 | uint32(p)<<27
-	if sanct {
-		v |= SanctBit
-	}
-	return v
-}
-
-// Decode splits a conntrack mark into VeriQ fields; other bits are ignored.
-func Decode(m uint32) (Class, Prov, bool) {
-	return Class((m & ClassMask) >> 24), Prov((m & ProvMask) >> 27), m&SanctBit != 0
-}
-```
+The Go package `model` holds the same masks and `Encode`/`Decode` helpers, so the renderer and the explain API share one definition.
 
 > **Why it matters.** Precedence is enforced **in the kernel** by comparing PROV values: a rule may overwrite the class only when its own provenance is higher. No packet waits for the daemon (P1), and a crashed daemon cannot leave a half-applied priority (P8).
 
 ## Ruleset structure
 
-Three base chains attach to netfilter hooks. Everything else is a regular chain reached by `goto` or `jump`.
+Four base chains attach to netfilter hooks. Everything else is a regular chain reached by `goto` or `jump`.
 
 ```text
  LAN -> WAN (upload)                               WAN -> LAN (download)
  ------------------------------------------        -------------------------------------------
  forward, prio mangle+5:  cls_up                   tc ingress on WAN: ctinfo cpmark -> mirred
    police (per-device policers, both dirs)           -> ifb-veriq (CAKE/HFSC/HTB shapes here)
-   MSS clamp, NFLOG sampling                       forward, prio mangle+5: cls_up
-   0 trust -> 2 sanction -> 3 lease                  iifname @wan_ifs -> goto down_path
-   -> 4 user -> 5 app mark -> 6 heuristics           down_path: [nft wash] -> envelope
-   -> preferential? goto envelope -> sanction
+   MSS clamp, NFLOG sampling (both dirs)           forward, prio mangle+5: cls_down
+   0 trust -> 2 sanction -> 3 lease                  (iifname @wan_ifs only)
+   -> 4 user -> 5 app mark -> 6 heuristics           7 default if PROV = 0; [nft wash]
+   -> 7 default; RT/IV? goto envelope -> sanction    RT/IV? goto envelope_dn -> sanction
  postrouting, prio mangle+10: mark_out             (no postrouting work for download)
    ct mark CLASS -> meta mark CLASS; [nft wash]
    -> WAN egress qdisc (fwmark 0x07000000)
  output, prio mangle+5: sys_out (router's own probes: SO_MARK -> ct mark)
 ```
 
-| Chain | Hook | Purpose |
-|---|---|---|
-| `cls_up` | forward, `mangle + 5` | Precedence pipeline (levels 1–7) on LAN → WAN packets; sends download packets to `down_path` |
-| `police` | jumped | Per-device policers (drop above a rate: a **policer, not a shaper**) |
-| `down_path` | goto | Download: optional nft wash (HFSC/HTB), then envelope metering |
-| `envelope`, `envelope_dn` | goto | Per-flow eligibility meters for RT and IV, per direction |
-| `sanction` | goto | Force BE, set SANCT, add to `@sanctioned`, notify veriqd (NFLOG group 8) |
-| `mark_out` | postrouting, `mangle + 10` | CLASS from ct mark to packet mark; nft egress wash; compat-mode DSCP store |
-| `sys_out` | output, `mangle + 5` | Router-originated probes get PROV 7 in the ct mark |
+Regular chains: `police` (jumped; per-device policers), `envelope` and `envelope_dn` (per-flow meters), `sanction` (force BE, record, notify veriqd on NFLOG group 8).
 
 The forward hook sees LAN addresses in both directions (source NAT happens later; destination NAT was already reversed), so device, lease and policer sets hold LAN addresses only.
 
@@ -125,7 +76,7 @@ The forward hook sees LAN addresses in both directions (source NAT happens later
 |---|---|---|---|---|
 | `wan_ifs` | `ifname` | veriqd on ifup | runtime | WAN devices; a renamed PPPoE device is an element change, not a reload |
 | `state_bypass` | `meta nfproto` | veriqd | runtime | Level 1 bypass while disabling |
-| `trusted_dscp4/6` | address, interval | config | static | Trusted DSCP sources (step 0, H2) |
+| `trusted_dscp4/6` | address, interval | config | static | Trusted DSCP sources (step 0 and H2, only when `trust = list`) |
 | `lease_rt4/6`, `lease_iv4/6` | address, timeout | veriqd after ACCEPT | runtime | Device leases; timeout = remaining time |
 | `sanctioned` | `ct id`, dynamic, timeout | kernel; veriqd escalates | runtime | Flows under penalty |
 | `dev_<name>_4/6` | address | veriqd (DHCP + neighbours) | runtime | A device's IPv4 and all IPv6 addresses |
@@ -134,7 +85,7 @@ The forward hook sees LAN addresses in both directions (source NAT happens later
 | `rt_up_b/_p`, `iv_up_b`, `rt_dn_b/_p`, `iv_dn_b` | `ct id`, dynamic, timeout | kernel | meter | Envelope (bytes `_b`, packets `_p`) |
 | `pol_<name>_up4/dn4`, `slowtcp` | address or `ct id`, dynamic | kernel | meter | Policers; H3 |
 
-docs/11 keys envelope meters by `ct id . ct direction`. Because the template keeps one set per direction (the thresholds differ), the direction is constant within a set and the key reduces to `ct id` with the same meaning. **Static** sets are rebuilt from config on every apply; **runtime** sets hold live state and must survive a reload.
+Envelope meters are keyed `ct id . ct direction` (docs/11 §5.2) and kept in one set per direction, because the thresholds differ. **Static** sets are rebuilt from config on every apply; **runtime** sets hold live state and must survive a reload.
 
 ## The annotated nftables template
 
@@ -178,13 +129,14 @@ define V_USER_BK  = 0x29000000
 define V_APP_RT   = 0x24000000
 define V_APP_IV   = 0x23000000
 define V_APP_BK   = 0x21000000
+define V_DEFAULT  = 0x0a000000             # CLASS BE, PROV 1 (C15)
 define V_HEUR_BK  = 0x11000000
 define V_HEUR_BE  = 0x12000000
 define V_HEUR_BEF = 0x15000000             # proposed (H3)
 define V_HEUR_RST = 0x10000000
 define V_SANCT_BE = 0x42000000
 define V_SYS_RT   = 0x3c000000
-define DSCP_NOBASIS = { cs2, cs3, cs6, cs7, af21, af22, af23, af31, af32, af33 }
+define DSCP_PREF = { ef, cs5, 0x2c, af41, af42, af43, cs4, 0x2d }   # H2 (C15)
 
 table inet veriq {
     comment "veriq:v{{.Version}}"          # ownership tag [verify: table comments]
@@ -199,12 +151,12 @@ table inet veriq {
     set lease_iv4 { type ipv4_addr; flags timeout; }
     set lease_iv6 { type ipv6_addr; flags timeout; }
     set sanctioned { typeof ct id; size 65536; flags dynamic, timeout; timeout 60s; }
-    set rt_up_b { typeof ct id; size 8192; flags dynamic, timeout; timeout 2m; }
-    set rt_up_p { typeof ct id; size 8192; flags dynamic, timeout; timeout 2m; }
-    set iv_up_b { typeof ct id; size 8192; flags dynamic, timeout; timeout 2m; }
-    set rt_dn_b { typeof ct id; size 8192; flags dynamic, timeout; timeout 2m; }
-    set rt_dn_p { typeof ct id; size 8192; flags dynamic, timeout; timeout 2m; }
-    set iv_dn_b { typeof ct id; size 8192; flags dynamic, timeout; timeout 2m; }
+    set rt_up_b { typeof ct id . ct direction; size 8192; flags dynamic, timeout; timeout 2m; }
+    set rt_up_p { typeof ct id . ct direction; size 8192; flags dynamic, timeout; timeout 2m; }
+    set iv_up_b { typeof ct id . ct direction; size 8192; flags dynamic, timeout; timeout 2m; }
+    set rt_dn_b { typeof ct id . ct direction; size 8192; flags dynamic, timeout; timeout 2m; }
+    set rt_dn_p { typeof ct id . ct direction; size 8192; flags dynamic, timeout; timeout 2m; }
+    set iv_dn_b { typeof ct id . ct direction; size 8192; flags dynamic, timeout; timeout 2m; }
     set bulk_tcp_ports { type inet_service; flags interval; {{.BulkTCPElems}} }
     set bulk_udp_ports { type inet_service; flags interval; {{.BulkUDPElems}} }
     {{.DeviceAppUserAndPolicerSets}}       # dev_*, app_*, user ipsets, pol_*, slowtcp
@@ -239,7 +191,8 @@ Points to note:
             log group 7 snaplen 60 queue-threshold 32
 {{end}}
         # Download packets were classified by act_ctinfo before shaping: meter only
-        iifname @wan_ifs goto down_path
+        # Download packets are handled by base chain cls_down
+        iifname @wan_ifs return
 
         # Step 0: trust (rendered only when trust = list)
 {{if .TrustList}}        ip saddr != @trusted_dscp4 ip dscp != cs0 ip dscp set cs0
@@ -252,9 +205,8 @@ Points to note:
 
         # Level 3: leases. Set element timeout = remaining lease time
         ip saddr @lease_rt4 ct mark set ct mark & $KEEP | $V_LEASE_RT goto envelope
-        ip6 saddr @lease_rt6 ct mark set ct mark & $KEEP | $V_LEASE_RT goto envelope
         ip saddr @lease_iv4 ct mark set ct mark & $KEEP | $V_LEASE_IV goto envelope
-        ip6 saddr @lease_iv6 ct mark set ct mark & $KEEP | $V_LEASE_IV goto envelope
+        # ... and the same two rules for ip6 saddr @lease_rt6 / @lease_iv6
 {{range .AppLeaseRules}}        {{.}}
 {{end}}        # Lease ended while the flow lived: drop the stale lease class
         ct mark & $PROV == $P_LEASE ct mark set ct mark & $KEEP
@@ -265,18 +217,12 @@ Points to note:
 {{.InlineStatements}}
 {{range .UserRules}}        {{.}}
 {{end}}
-        # Level 5: app mark (DSCP/ECN hint), only if PROV < 4
+        # Level 5: app mark (DSCP/ECN hint), only if PROV < 4 (each rule also as ip6 dscp)
         ct mark & $PROV $P_LT4 ip dscp { ef, cs5, 0x2c } \
-            ct mark set ct mark & $KEEP | $V_APP_RT goto envelope
-        ct mark & $PROV $P_LT4 ip6 dscp { ef, cs5, 0x2c } \
             ct mark set ct mark & $KEEP | $V_APP_RT goto envelope
         ct mark & $PROV $P_LT4 ip dscp { af41, af42, af43, cs4, 0x2d } \
             ct mark set ct mark & $KEEP | $V_APP_IV goto envelope
-        ct mark & $PROV $P_LT4 ip6 dscp { af41, af42, af43, cs4, 0x2d } \
-            ct mark set ct mark & $KEEP | $V_APP_IV goto envelope
         ct mark & $PROV $P_LT4 ip dscp { cs1, 0x01 } \
-            ct mark set ct mark & $KEEP | $V_APP_BK return
-        ct mark & $PROV $P_LT4 ip6 dscp { cs1, 0x01 } \
             ct mark set ct mark & $KEEP | $V_APP_BK return
         ct mark & $PROV == $P_APP ct mark & $CLASS $PREF goto envelope
         ct mark & $PROV == $P_APP return
@@ -287,7 +233,8 @@ Points to note:
         # Any preferential class reaching this point is metered.
         ct mark & $CLASS $PREF goto envelope
 
-        # Level 7: default. CLASS stays 0 and the qdisc decides (see notes)
+        # Level 7: default (C15). First packet of a still-unclassified flow -> BE, PROV 1
+        ct mark & $PROV == 0x0 ct mark set ct mark & $KEEP | $V_DEFAULT
     }
 ```
 
@@ -298,7 +245,7 @@ How the pipeline maps to docs/11 §5.2:
 - **Level 3.** A lease matches from the **first packet** (docs/09 A.8). The "lease ended" rule re-classifies a flow that outlives its lease.
 - **Level 4.** User-rule decisions are sticky for the connection's life. When a rule is deleted or its schedule ends, veriqd clears PROV 5 on affected live flows over conntrack netlink (**implementation tip**: "rule off" then acts at once). The validated `inline.nft` content is pasted in, not `include`d, so the candidate is self-contained for `nft -c` and the support bundle. Each user rule carries `comment "veriq:rule:<name>"` so read-back maps counters to rules; RT/IV rules end in `goto envelope`, BE/BK rules in `return`.
 - **Level 5.** NQB (45, `0x2d`) maps to IV, Voice-Admit (44, `0x2c`) to RT, CS1 and Lower Effort (1) to BK.
-- **Level 6.** Heuristics are in Part 4. ML verdicts come from veriqd over netlink, only when stored PROV < 3 and only in LIVE. **Level 7** writes nothing.
+- **Level 6.** Heuristics are in Part 4. ML verdicts come from veriqd over netlink, only when stored PROV < 3 and only in LIVE. **Level 7** (C15) gives every still-unclassified flow CLASS BE with PROV 1 on its first packet in either direction (here and in `cls_down`). After that first packet a flow's tin never depends on a DSCP set by a LAN device or the ISP, because CAKE's `wash` clears DSCP only *after* choosing the tin. PROV 1 is the lowest real provenance, so every later level can still override it.
 
 Every class-writing rule is guarded so it fires only when the stored PROV is lower than its own, so precedence is monotonic by construction; the property test "a higher PROV is never overwritten" (docs/11 §14.4) runs against this template in a network namespace.
 
@@ -306,35 +253,39 @@ Every class-writing rule is guarded so it fires only when the stored PROV is low
 
 **Device + app leases.** For a port-defined app the renderer adds, for example, `ip saddr @lease_app_zoom_iv4 udp dport 8801-8810 ct mark set … goto envelope`; a domain-defined app matches `ip daddr @app_zoom_4`. These per-app lease sets stay empty until a lease is granted.
 
-### Part 3: chains `down_path`, `envelope` and `sanction`
+### Part 3: chains `cls_down`, `envelope` and `sanction`
 
 ```nft
-    chain down_path {
+    chain cls_down {
+        type filter hook forward priority mangle + 5; policy accept;
+        iifname != @wan_ifs return
+        meta nfproto @state_bypass return
+        # Level 7 (C15): a flow first seen from the WAN gets BE, PROV 1
+        ct mark & $PROV == 0x0 ct mark set ct mark & $KEEP | $V_DEFAULT
         # HFSC/HTB only: wash ISP DSCP after shaping, before the LAN (protects WMM)
 {{if .NftWashIngress}}        ip dscp != cs0 ip dscp set cs0
         ip6 dscp != cs0 ip6 dscp set cs0
-{{end}}        ct mark & $CLASS $PREF goto envelope
+{{end}}        ct mark & $CLASS $PREF goto envelope_dn
     }
 
     chain envelope {
-        iifname @wan_ifs goto envelope_dn
-        ct mark & $CLASS == $C_RT update @rt_up_b { ct id \
+        ct mark & $CLASS == $C_RT update @rt_up_b { ct id . ct direction \
             limit rate over {{.RTUpBps}} bytes/second burst {{.RTUpBurst}} bytes } \
             goto sanction
-        ct mark & $CLASS == $C_RT update @rt_up_p { ct id \
+        ct mark & $CLASS == $C_RT update @rt_up_p { ct id . ct direction \
             limit rate over {{.RTPps}}/second burst {{.RTPpsBurst}} packets } goto sanction
-        ct mark & $CLASS == $C_IV update @iv_up_b { ct id \
+        ct mark & $CLASS == $C_IV update @iv_up_b { ct id . ct direction \
             limit rate over {{.IVUpBps}} bytes/second burst {{.IVUpBurst}} bytes } \
             goto sanction
     }
 
     chain envelope_dn {
-        ct mark & $CLASS == $C_RT update @rt_dn_b { ct id \
+        ct mark & $CLASS == $C_RT update @rt_dn_b { ct id . ct direction \
             limit rate over {{.RTDnBps}} bytes/second burst {{.RTDnBurst}} bytes } \
             goto sanction
-        ct mark & $CLASS == $C_RT update @rt_dn_p { ct id \
+        ct mark & $CLASS == $C_RT update @rt_dn_p { ct id . ct direction \
             limit rate over {{.RTPps}}/second burst {{.RTPpsBurst}} packets } goto sanction
-        ct mark & $CLASS == $C_IV update @iv_dn_b { ct id \
+        ct mark & $CLASS == $C_IV update @iv_dn_b { ct id . ct direction \
             limit rate over {{.IVDnBps}} bytes/second burst {{.IVDnBurst}} bytes } \
             goto sanction
     }
@@ -347,45 +298,42 @@ Every class-writing rule is guarded so it fires only when the stored PROV is low
     }
 ```
 
-**Envelope values.** The renderer computes the thresholds from **S_base**, not the moving S, so these rules do not churn when the controller changes rates (docs/11 §5.7). They are re-rendered when S_base changes, for example after the wizard runs.
+**Envelope values** come from **S_base**, not the moving S, so the rules do not churn when the controller changes rates; they are re-rendered when S_base changes (docs/11 §5.7).
 
 | Class | Rate threshold per flow | Packet threshold | Burst (rendering assumption) |
 |---|---|---|---|
 | RT | max(1 Mbit/s, 2% of S_base,dir) | 450 pps | 0.25 s worth of the threshold |
 | IV | max(8 Mbit/s, 25% of S_base,dir) | — | 0.25 s worth of the threshold |
 
-The burst value is **not** in docs/11; it is the renderer's starting assumption and is tuned with the envelope thresholds in S11/A11 (open decision O9). The trade-off is simple to explain. A token bucket with rate R and burst B lets a flow sending at X > R run for B / (X − R) seconds before it trips. With B = 0.25·R, a flow at twice the threshold is caught after 0.25 s, and a flow 20% over after 1.25 s. A11's target is "sanctioned within 1 s" for a clearly misbehaving flow, while a video key-frame burst stays well inside the IV burst.
+The burst is **not** in docs/11: it is a rendering assumption, tuned with the thresholds in S11/A11 (O9). A token bucket with rate R and burst B lets a flow at X > R run for B / (X − R) seconds before it trips. With B = 0.25·R a flow at twice the threshold is caught after 0.25 s and one 20% over after 1.25 s, against A11's target of "sanctioned within 1 s"; a video key-frame burst stays inside the IV burst.
 
-**Sanction mechanics.** The first violation sets CLASS = BE and SANCT = 1 in the ct mark, keyed by flow, so both directions are sanctioned at once. It adds the flow to `@sanctioned` for 60 s and sends one NFLOG message to veriqd on group 8. veriqd counts offences per flow over the last hour. On a repeat (the flow recovers, regains its class and trips the meter again), the kernel re-adds a fresh 60 s element, and veriqd proposes `SANCTION_ESCALATE` to the Action Checker. If accepted, veriqd replaces the element with a doubled timeout (×2 per offence, cap 15 min) by deleting and re-adding it in one `nft -f` transaction **[verify: element timeout update semantics]**. The device and its other flows are unaffected.
+**Sanction mechanics.** The first violation sets CLASS = BE and SANCT = 1 for the flow (both directions), adds it to `@sanctioned` for 60 s and sends one NFLOG message (group 8) to veriqd, which counts offences per flow over the last hour. On a repeat (the flow recovers, regains its class, trips again) the kernel re-adds a fresh 60 s element and veriqd proposes `SANCTION_ESCALATE`; if accepted, it replaces the element with a doubled timeout (cap 15 min) by delete + add in one `nft -f` transaction **[verify]**. The device's other flows are unaffected.
 
-> **Honesty check.** Because a sanctioned flow is not metered during its penalty, a flow that keeps misbehaving regains its preferential class for up to one burst (0.25 s at the starting value) after each penalty ends, then trips again with a doubled penalty. The leak is bounded and visible in the decision log. If S11/A11 shows it matters, the alternative is to keep metering sanctioned flows during the penalty, which needs the original class recorded per flow. That is a design change to record in docs/12, not something to improvise in code.
+> **Honesty check.** A sanctioned flow is not metered during its penalty, so a persistent offender regains its class for up to one burst (0.25 s at the starting value) after each penalty, then trips again with a doubled penalty. The leak is bounded and logged. Metering during the penalty would need the original class stored per flow: a design change for docs/12, not an improvisation in code.
 
-The standing-queue rule ("a preferential tin holds a standing queue for ≥ 3 s") cannot be expressed in nft. veriqd detects it from the CAKE per-tin delay statistics, picks the top contributing flow from conntrack counters, and writes the same sanction state: the ct mark over netlink plus an `@sanctioned` element.
+The standing-queue rule (preferential tin queue ≥ 3 s) is not expressible in nft: veriqd detects it from CAKE per-tin delays, picks the top contributing flow from conntrack counters, and writes the same sanction state over netlink.
 
 ### Part 4: heuristics, wash, policers
 
-The heuristic rules are rendered into `{{.HeuristicRules}}`. All of them are guarded by `PROV <= 2`, so they can never touch a lease, user rule, app mark or ML verdict, and they only demote or reset (C7).
+All heuristic rules are guarded by `PROV <= 2`, so they never touch a lease, user rule, app mark or ML verdict, and they only demote or reset (C7).
 
 ```nft
         # H5 bulk ports -> BK (both ends: server port, or a local P2P listening port)
         ct mark & $PROV $P_LE2 tcp dport @bulk_tcp_ports \
             ct mark set ct mark & $KEEP | $V_HEUR_BK return
-        ct mark & $PROV $P_LE2 tcp sport @bulk_tcp_ports \
-            ct mark set ct mark & $KEEP | $V_HEUR_BK return
-        ct mark & $PROV $P_LE2 udp dport @bulk_udp_ports \
-            ct mark set ct mark & $KEEP | $V_HEUR_BK return
-        ct mark & $PROV $P_LE2 udp sport @bulk_udp_ports \
-            ct mark set ct mark & $KEEP | $V_HEUR_BK return
+        # ... likewise tcp sport, udp dport and udp sport against the port sets
         # H1 sustained bulk: ct bytes (both directions) > 10 s x S_down_base
         ct mark & $PROV $P_LE2 ct bytes > {{.H1Bytes}} ct mark & $CLASS != $C_BK \
             ct mark set ct mark & $KEEP | $V_HEUR_BK return
-        # H2 new-flow reset: within the 500 ms byte budget, a preferential DSCP with no
-        # basis from a source outside @trusted_dscp -> DSCP cs0, CLASS 0 (PROV 2)
+        # H2 new-flow reset (only when trust = list): within the 500 ms byte budget, a
+        # preferential DSCP from a source outside @trusted_dscp -> CLASS 0 (PROV 2)
+{{if .TrustList}}
         ct mark & $PROV $P_LE2 ct bytes < {{.H2Bytes}} ip saddr != @trusted_dscp4 \
-            ip dscp $DSCP_NOBASIS ip dscp set cs0 ct mark set ct mark & $KEEP | $V_HEUR_RST
+            ip dscp $DSCP_PREF ct mark set ct mark & $KEEP | $V_HEUR_RST
         ct mark & $PROV $P_LE2 ct bytes < {{.H2Bytes}} ip6 saddr != @trusted_dscp6 \
-            ip6 dscp $DSCP_NOBASIS ip6 dscp set cs0 ct mark set ct mark & $KEEP | $V_HEUR_RST
-{{if .H3}}        # H3 (HFSC/HTB only, P1): TCP below 150 pps -> fast-BE; above -> plain BE
+            ip6 dscp $DSCP_PREF ct mark set ct mark & $KEEP | $V_HEUR_RST
+{{end}}{{if .H3}}
+        # H3 (HFSC/HTB only, P1): TCP below 150 pps -> fast-BE; above -> plain BE
         ct mark & $PROV $P_LE2 meta l4proto tcp update @slowtcp { ct id \
             limit rate over 150/second } ct mark set ct mark & $KEEP | $V_HEUR_BE
         ct mark & $PROV $P_LE2 meta l4proto tcp ct mark & $CLASS == 0x0 \
@@ -393,23 +341,19 @@ The heuristic rules are rendered into `{{.HeuristicRules}}`. All of them are gua
 {{end}}
 ```
 
-| ID | What the template does | Threshold source | Notes |
-|---|---|---|---|
-| H1 | Demotes to BK once the connection has moved more than 10 s worth of S_down_base (both directions counted) | docs/11 §5.5 | The second H1 condition (duration > 30 s and average rate > 30% of S) needs the flow's age, which nft cannot read. veriqd evaluates it from conntrack NEW events and accounting, and writes BK with PROV 2 over netlink |
-| H2 | Resets new flows that carry a "no-basis" preferential DSCP (CS2, CS3, CS6, CS7, AF2x, AF3x) | 500 ms byte budget = 0.5 s × S_down_base | Step 5's app-mark DSCPs are left alone; they already have a basis and the envelope |
-| H3 | Off on CAKE (CAKE's sparse-flow boost already favours low-rate flows). On HFSC/HTB it marks low-rate TCP as fast-BE, never RT/IV, and demotes it to plain BE as soon as it exceeds 150 pps | docs/11 §5.5 | pps is measured on LAN → WAN packets only (ACKs for downloads). The CLASS value 5 for fast-BE is a **proposed encoding** (docs/11 §4.2 defines 0–4); CAKE ignores mark values above its tin count, so it is harmless there. Confirm before Sprint 5 |
-| H4 | Not a rule: high-rate UDP in a preferential class is caught by the envelope | — | QoSmate's 450 pps threshold is the RT starting value |
-| H5 | BK for configured bulk ports | User config | Empty by default |
+| ID | Template behaviour | Notes |
+|---|---|---|
+| H1 | BK once the connection has moved > 10 s × S_down_base bytes (both directions) | The second condition (age > 30 s and average > 30% of S) needs the flow's age, which nft cannot read; veriqd evaluates it from conntrack events and writes BK, PROV 2 |
+| H2 | Only when `trust = list`: within the 500 ms byte budget (0.5 s × S_down_base), a flow carrying EF, CS5, VA (44), AF41–43, CS4 or NQB (45) from a source outside `@trusted_dscp` is reset to CLASS 0, PROV 2 | Rendered after step 0, which already washes those sources, so on most paths H2 is defence in depth; the self-test checks that it never fires on trusted sources |
+| H3 | Off on CAKE (sparse-flow boost already favours low-rate flows). HFSC/HTB: TCP under 150 pps → fast-BE, demoted to BE when over | pps counted on LAN → WAN packets only. CLASS 5 for fast-BE is a **proposed encoding** (docs/11 defines 0–4; CAKE ignores marks above its tin count). Confirm before Sprint 5 |
+| H4 | No rule: the envelope catches high-rate preferential UDP | 450 pps (QoSmate's threshold) is the RT starting value |
+| H5 | BK for configured bulk ports | Empty by default |
 
-**Pure ACKs.** No rule handles ACKs separately. The class lives in the connection, so a flow's pure ACKs (< 100 bytes) automatically ride that flow's class on every backend (docs/11 §4.5). On HFSC and HTB nothing drops ACKs. On CAKE, `ack-filter` is used only on egress, and only when the download/upload ratio is ≥ 15.
+**Pure ACKs** need no rule: the class lives in the connection, so a flow's ACKs ride its class on every backend. HFSC/HTB never drop ACKs; CAKE uses `ack-filter` on egress only when the download/upload ratio is ≥ 15.
 
-**Wash rules.** In the **product** profile, DSCP is washed in both directions after classification (C6):
-- **CAKE backend:** the `wash` keyword on both CAKE instances. CAKE chooses the tin first and then clears the DSCP.
-- **HFSC/HTB backends:** nft rules. On download, `down_path` sets the DSCP to CS0 after the IFB has shaped the packet and before it reaches the LAN. On upload, `mark_out` washes at the end of postrouting, after the CLASS has been copied to the packet mark.
+**Wash rules** (product profile, C6). The CAKE backend uses the `wash` keyword on both instances (CAKE picks the tin, then clears the DSCP). HFSC/HTB use nft: `cls_down` washes after IFB shaping and before the LAN; `mark_out` washes at the end of postrouting. The lab profile renders neither. With egress wash on, a QoSmate-style `set_dscp '1'` never leaves the router, so the UI warns that it matters only when `wash_egress = 0`.
 
-The **lab** profile renders neither. QoSmate-style `set_dscp '1'` on a user rule writes a DSCP into the packet; with egress wash on, that DSCP never leaves the router, so the UI should warn that `set_dscp` only matters upstream when `wash_egress = 0`.
-
-**Policers.** The QoSmate-compatible `ratelimit` section renders into chain `police`. Each target address gets its own meter element, so the limit is per device, not shared across the group.
+**Policers.** Each `ratelimit` target address gets its own meter element (per device, not shared):
 
 ```nft
     chain police {
@@ -420,9 +364,9 @@ The **lab** profile renders neither. QoSmate-style `set_dscp '1'` on a user rule
     }
 ```
 
-`burst = burst_factor × 1 s × rate` is a **rendering assumption**. A policer drops packets above the rate; it does not queue them. On download the drop happens after the IFB has already shaped the packet, so some shaped capacity is spent on packets that are then dropped. That is inherent to policing, and the UI labels the feature "policer, not a shaper" (principle P7).
+`burst = burst_factor × 1 s × rate` is a rendering assumption. Download drops happen after IFB shaping, so some shaped capacity is spent on packets then dropped: inherent to policing, hence the label "policer, not a shaper" (P7).
 
-**MSS clamp.** docs/11 §4.5 clamps the SYN MSS (Maximum Segment Size) to a value in 536–1500 when either direction's S is below 3000 kbit/s. It does not fix how the value is chosen. A **proposed** rule is the largest MSS whose full segment serialises in ≤ 5 ms at the lower S, bounded to 536–1500. At 2000 kbit/s that is 5 ms × 2000 kbit/s = 1250 bytes on the wire, so MSS = 1250 − 40 = 1210. The rule matches SYN packets in both directions, which clamps both what the LAN host advertises and what the remote host advertises.
+**MSS clamp.** docs/11 §4.5 clamps the SYN MSS (Maximum Segment Size) into 536–1500 when a direction's S < 3000 kbit/s but does not fix the value. **Proposed:** the largest MSS whose segment serialises in ≤ 5 ms at the lower S; at 2000 kbit/s, 1250 bytes on the wire, so MSS 1210. The rule matches SYNs in both directions.
 
 ### Part 5: chains `mark_out` and `sys_out`
 
@@ -450,15 +394,122 @@ The **lab** profile renders neither. QoSmate-style `set_dscp '1'` on a user rule
 } # end table inet veriq
 ```
 
-- **Why four constant rules.** docs/11 §4.2 specifies four constant-OR rules rather than one "copy the field" statement. Combining two registers (`meta mark | (ct mark & mask)`) is not portable across the nft versions OpenWrt ships. The template also clears the packet's CLASS bits first (`& MKEEP`), so a stale value can never OR into the wrong tin.
-- **Why postrouting.** `mark_out` sees forwarded and router-originated packets alike, and it runs after veriqd may have changed the ct mark over netlink (ML verdicts), so the newest class is always used.
-- **`sys_out` (proposed).** veriqd opens its probe sockets with `SO_MARK = 0x3c000000` (CLASS RT, PROV 7). The packet mark selects the Voice tin on upload; `sys_out` copies the value into the ct mark so that echo and timestamp replies also land in the Voice tin via `ctinfo` on download. The aim is that the delay signal D measures the path *beyond* VeriQ's own queue, as the bufferbloat detector assumes (docs/11 §6.3). At ≤ 10 probes/s the Voice-tin load is negligible. This is not specified in docs/11 beyond "PROV 7 = system (probes)"; confirm it in Stage 1.
-- **Compat mode** (the four `0xffffff00` rules) is explained with the tc templates below.
+- **Four constant rules** (docs/11 §4.2) because combining two registers is not portable across OpenWrt's nft versions; clearing the packet's CLASS first (`& MKEEP`) means a stale value never ORs into the wrong tin. Postrouting sees forwarded and router-originated packets, after any ML write over netlink.
+- **`sys_out` (proposed).** Probe sockets use `SO_MARK = 0x3c000000` (RT, PROV 7). The packet mark selects the Voice tin on upload; `sys_out` copies it to the ct mark so replies also land in Voice via `ctinfo`. D then measures the path *beyond* VeriQ's own queue, as the bufferbloat detector assumes (docs/11 §6.3); ≤ 10 probes/s is negligible load. docs/11 says only "PROV 7 = system (probes)"; confirm in Stage 1.
+- **Compat mode** (the `0xffffff00` rules) is explained with the tc templates.
 
 ### Implementation notes the team must not miss
 
-> **Implementation tip.** With CLASS 0 (the default level), CAKE picks the tin from the **packet DSCP** and only then washes it. So a LAN device that sets CS6, or an ISP that sets EF on download, can reach a preferential CAKE tin without passing step 5 or the envelope. H2 reduces this for the start of upload flows only. HFSC and HTB are not affected, because CLASS 0 falls to the default class `1:13` (BE). Treat this as an **open question for the design owner**. Until it is decided, the Stage-1 tin self-test must include a CS6-marked LAN probe and an EF-marked WAN probe, so the behaviour is measured rather than assumed.
+> **Implementation tip.** Before C15, a flow with CLASS 0 would have been placed by its packet DSCP, because CAKE washes only after choosing the tin; an ISP-set EF on download could then reach the Voice tin with no basis. The level-7 default closes that for every packet after a flow's first. The one remaining exposure is the very first packet of a WAN-initiated flow, which crosses the IFB before `cls_down` runs (docs/09 A.8 now holds only for that packet). HFSC/HTB are unaffected (no DSCP fallback; CLASS 0 → `1:13`). The Stage-1 self-test sends an EF-marked download probe and a CS6-marked LAN probe to confirm both.
 
-- **Flow offloading bypasses all of this.** Software and hardware flow offloading skip the forward hook. The health check refuses LIVE while either is on (docs/11 §12.4, A24).
-- **nf_conntrack_acct.** `ct packets` and `ct bytes` need `net.netfilter.nf_conntrack_acct = 1`, which the package's uci-defaults script sets. Without it, the sampling rule never fires and H1/H2 behave wrongly. The self-test checks the sysctl.
-- **Coexistence scan.** Before installing the classifier, the health check scans `nft -j list ruleset` for any `ct mark set` or `meta mark set` written by another table that touches bits 24–30, and refuses to start the classifier if it finds one (docs/11 §12.4).
+- **Flow offloading** skips the forward hook; the health check refuses LIVE while it is on (A24).
+- **`nf_conntrack_acct = 1`** (shipped in `/etc/sysctl.d/90-veriq.conf`) is needed by `ct packets`/`ct bytes`; the self-test checks it.
+- **Coexistence scan:** the health check refuses the classifier if another table writes ct or packet mark bits 24–30 (docs/11 §12.4).
+
+## tc templates
+
+veriqd feeds tc through `tc -batch -` (one process, lines in order) and creates the IFB link with `ip link`. A tc batch is **not** atomic, so every sequence below is ordered so that each intermediate state is valid, and each step is read back (docs/11 §8.3).
+
+**Link layer.** The CAKE templates use the preset keyword from docs/11 §4.4 (`ethernet` = overhead 38, mpu 84; `docsis`; `pppoe-ptm`; `bridged-ptm`; `conservative` for unknown ADSL; `overhead 44 mpu 84` for unknown non-DSL). HFSC and HTB put the same values into a size table, for example `stab overhead 38 linklayer ethernet`.
+
+### CAKE (default backend)
+
+```bash
+# 1. Upload: root CAKE on the WAN device
+qdisc replace dev {{.Wan}} root handle 1: cake bandwidth {{.UpKbit}}kbit diffserv4 \
+    {{.UpIsolation}} nat fwmark 0x07000000 {{.UpWash}} {{.AckFilter}} \
+    {{.LinkKeywords}} {{.Rtt}} {{.ExtraEgress}}
+# 2. Download: IFB link (ip, not tc), then CAKE on it
+#    ip link add name ifb-veriq type ifb && ip link set dev ifb-veriq up
+qdisc replace dev ifb-veriq root handle 1: cake bandwidth {{.DownKbit}}kbit diffserv4 \
+    {{.DownIsolation}} nat ingress fwmark 0x07000000 {{.DownWash}} \
+    {{.LinkKeywords}} {{.Rtt}} {{.ExtraIngress}}
+# 3. Last: redirect WAN ingress, copying CLASS/PROV/SANCT into the packet mark
+qdisc replace dev {{.Wan}} handle ffff: ingress
+filter add dev {{.Wan}} parent ffff: protocol all prio 10 matchall \
+    action ctinfo cpmark 0x7f000000 \
+    action mirred egress redirect dev ifb-veriq
+```
+
+- Isolation renders `dual-srchost`/`dual-dsthost` (or `flows` when off); wash renders `wash` (product) or `nowash` (lab); `{{.AckFilter}}` is `ack-filter` when `auto` and down/up ≥ 15. CAKE's `autorate-ingress` is never used: it would fight the controller.
+- **Verify the ctinfo filter syntax with tc-ctinfo(8)** [R7] on the target iproute2, and the `fwmark` → tin mapping with the self-test (O2).
+- **One-directional shaping:** `S_dir = 0` omits that direction's qdisc (and, for download, the IFB and redirect); health reports it "off".
+- **Order:** nft, upload qdisc, IFB and its qdisc, and the redirect **last**, so it never points at a missing or unshaped device.
+
+### HFSC (realtime option)
+
+Shown rendered for upload at S = 45 000 kbit/s. Download is identical on `ifb-veriq` with the download S; only the CAKE template needs `ingress` and `dual-dsthost`.
+
+```bash
+qdisc del dev eth1 root                                  # install only; error ignored
+qdisc add dev eth1 root handle 1: stab overhead 38 linklayer ethernet hfsc default 13
+class add dev eth1 parent 1:  classid 1:1  hfsc ls m2 45000kbit ul m2 45000kbit
+class add dev eth1 parent 1:1 classid 1:11 hfsc rt m1 14300kbit d 10ms m2 7150kbit
+class add dev eth1 parent 1:1 classid 1:12 hfsc ls m2 13500kbit          # IV, 30 %
+class add dev eth1 parent 1:1 classid 1:13 hfsc ls m2 22500kbit          # BE, 50 %
+class add dev eth1 parent 1:1 classid 1:14 hfsc ls m2 4500kbit           # fast-BE (H3)
+class add dev eth1 parent 1:1 classid 1:15 hfsc ls m2 4500kbit           # BK, 10 %
+qdisc add dev eth1 parent 1:13 handle 13: fq_codel target 5ms interval 105ms quantum 300
+# ... the same fq_codel leaf on 1:11, 1:12, 1:14, 1:15 (handles 11: 12: 14: 15:)
+filter add dev eth1 parent 1: protocol all prio 1 handle 0x04000000/0x07000000 fw classid 1:11
+# ... likewise 0x03000000 -> 1:12, 0x02000000 -> 1:13, 0x05000000 -> 1:14, 0x01 -> 1:15
+```
+
+- **RT budget** B = 15% of S + 400 kbit (docs/11 §4.3; QoSmate's GAMEUP default, read) = 7150 kbit/s. The rt curve (`m1 = 2·B` for 10 ms) and the link-share weights are **rendering assumptions** to tune in H3.
+- **AQM** (docs/11 §4.5): `target = max(5 ms, 1.5 × MTU serialisation at S)`, `interval = 100 ms + target`, quantum 300 below 100 Mbit/s; at 45 Mbit/s a 1514-byte frame takes 0.27 ms, so 5 ms.
+- **pfifo RT leaf** (`rt_leaf pfifo`): limit = `pfifo_min + ceil(maxdel × B / (8 × packet_size))` = 5 + ceil(24 ms × 7150 kbit/s / 3600 B) = 53 packets, what drains within `maxdel`.
+- CLASS 0 has no DSCP fallback: it lands in default `1:13`. Class 1:14 exists only with H3.
+
+### HTB (lowest CPU)
+
+```bash
+qdisc add dev eth1 root handle 1: stab overhead 38 linklayer ethernet htb default 13
+class add dev eth1 parent 1:  classid 1:1  htb rate 45000kbit ceil 45000kbit burst 5625
+class add dev eth1 parent 1:1 classid 1:11 htb rate 13500kbit ceil 45000kbit prio 0 # RT+IV
+class add dev eth1 parent 1:1 classid 1:13 htb rate 27000kbit ceil 45000kbit prio 1 # BE
+class add dev eth1 parent 1:1 classid 1:15 htb rate 4500kbit ceil 45000kbit prio 2  # BK
+# every class: quantum 1514; leaves fq_codel as for HFSC; fw filters 0x04 and 0x03 -> 1:11,
+# 0x02 -> 1:13, 0x01 -> 1:15 (0x05 -> optional fast-BE 1:14 when htb.fast_be = 1, H3)
+```
+
+Rate shares, `burst = S × 1 ms` and the explicit quantum (the default `r2q` gives one far above the MTU at these rates) are **rendering assumptions**. HTB has no host isolation; the UI says so.
+
+### Rate changes, SAFE and teardown
+
+| Backend | Ordered steps for a rate change to S′ | Validity predicate checked after each step |
+|---|---|---|
+| CAKE | `qdisc change dev <dev> root cake bandwidth S′kbit` (one netlink message) | Read-back bandwidth = S′ (within rounding) |
+| HFSC | 1. `1:1 ls m2 S′ ul m2 S′`; 2. `1:11` rt curve with B′ = 0.15·S′ + 400; 3. ls leaves scaled; 4. fq_codel targets if they move ≥ 1 ms | rt m1 and m2 of `1:11` < ul of `1:1` (rt service ignores `ul`). If a deep cut makes the old B ≥ S′, step 2 goes first |
+| HTB | 1. `1:1 rate ceil S′`; 2. leaves `rate share·S′ ceil S′`; 3. fq_codel targets | Leaf ceil ≤ root ceil |
+
+If a step fails, the backend runs the compensating step (restore the previous value) or the state goes to SAFE; at most 3 retries with capped backoff (docs/11 §8.3).
+
+After every accepted rate change, `enforce` rewrites `/var/run/veriq/safe.env` (atomically: temp file and rename) with the SAFE rates, 0.85 × min(S_lkg, S_base) per direction. The watchdog's `safe-apply.sh` reads it without asking veriqd anything:
+
+```ini
+VERIQ_VERSION=812
+VERIQ_BACKEND=cake
+VERIQ_WAN=eth1
+VERIQ_IFB=ifb-veriq
+VERIQ_SAFE_UP_KBIT=34000
+VERIQ_SAFE_DOWN_KBIT=51000
+VERIQ_SAFE_BATCH=/var/run/veriq/safe.tc
+```
+
+The values are illustrative (S_lkg 40 000/60 000 kbit/s up/down; S_base 45 000/90 000). For CAKE the watchdog runs one `tc qdisc change … bandwidth` per direction. For HFSC/HTB it runs the pre-rendered ordered batch `safe.tc` for the *same* backend: replacing the root qdisc from a shell loop would interrupt traffic. docs/11 §8.2 describes SAFE as "static CAKE"; keeping the active backend at SAFE rates is this chapter's interpretation, to confirm with the safety owner.
+
+**Teardown** (DISABLED, `veriqctl uninstall-cleanup`) is the install order reversed: delete the WAN ingress qdisc (which removes the redirect), the IFB root qdisc, `ip link del ifb-veriq`, the WAN root qdisc, then `nft delete table inet veriq` and `inet veriq_custom`. Only owned objects are touched. Stale VeriQ bits left in live conntrack entries are harmless; veriqd clears bits 24–30 over netlink when it has time to (**implementation tip**).
+
+### Compat mode (O3: `act_ctinfo cpmark` unavailable)
+
+If the self-test finds `cpmark` missing or broken, docs/11 O3 falls back to QoSmate-style DSCP restore. Upload is unchanged (fwmark from `mark_out`). For download, `mark_out` also stores a class DSCP with a "valid" bit in the ct mark (RT → EF `0xae`, IV → AF41 `0xa2`, BE → CS0 `0x80`, BK → CS1 `0x88`; the rules shown in Part 5), and the ingress filter becomes:
+
+```bash
+filter add dev {{.Wan}} parent ffff: protocol all prio 10 matchall \
+    action ctinfo dscp 63 128 \
+    action mirred egress redirect dev ifb-veriq
+```
+
+CAKE on the IFB then picks the tin from the restored DSCP and washes it afterwards. Health shows "compat mode".
+
+> **Honesty check.** `ctinfo dscp 63 128` keeps the DSCP in ct mark **bits 0–7**, which breaks the §4.2 promise that bits 0–23 are never touched. Compat mode must therefore extend the conflict scan to bits 0–7 and refuse to start if another package uses them. Moving the DSCP into bits 24–30 would destroy the CLASS/PROV encoding that kernel precedence depends on, so it is not an option. Record this as a caveat to O3.

@@ -4,7 +4,7 @@ This chapter is the build manual for `veriqd`. For each of the 19 packages under
 
 Six pieces carry the most risk and get full Go skeletons: `checker.Check` with every refusal code, the control tick, the reflector median and quorum, the windowed-minimum baseline, the conformal set builder and the tree-ensemble evaluator.
 
-The skeletons were written to compile against the types of docs/11 §14.2, but they are **starting code, not tested product code**. Import paths are shortened to `veriq/internal/...`; use the module path from `go.mod`. Every numeric constant is a **starting parameter** from docs/11 or docs/09 Appendix A, to be tuned in Stage 2 and recorded in the run manifest.
+The skeletons compile against the types of docs/11 §14.2, but they are **starting code, not tested product code**. Import paths are shortened to `veriq/internal/...`. Every numeric constant is a **starting parameter** from docs/11 or docs/09 Appendix A, to be tuned in Stage 2.
 
 > **Note.** Effort figures are **assumptions**: person-days for one developer who knows basic Go, including unit tests but not lab evaluation. The build order and sprint mapping are in the summary table at the end of this chapter and in chapter 22.
 
@@ -36,7 +36,7 @@ cmd/veriqd, cmd/veriqctl
 
 ### Goroutines and channels in `cmd/veriqd`
 
-`main.go` only wires the packages together. The runtime shape follows docs/11 §14.2: one control goroutine owns all decision state; I/O goroutines feed it typed messages.
+`main.go` only wires packages together. As docs/11 §14.2 requires, one control goroutine owns all decision state and I/O goroutines feed it typed messages.
 
 ```text
  probe.Run ───────── Result ─────────┐
@@ -222,9 +222,7 @@ type PktHdr struct{ /* ct id, dir, length, At, Header [60]byte */ } // cut after
 func NewNFLOG(group uint16) (*NFLOG, error)
 func (n *NFLOG) Run(ctx context.Context, out chan<- PktHdr) error
 
-func PollWiFi(ctx context.Context, r Runner) ([]model.StationStat, error) // every 5 s
-func ReadSoftirq(path string) (CPUStat, error)                          // /proc/stat
-func Devices(ctx context.Context, r Runner) ([]Device, error) // DHCP + neighbours
+// Also: PollWiFi (every 5 s), ReadSoftirq (/proc/stat), Devices (DHCP + neighbours).
 
 // Throughput turns two samples into G_gw (kbit/s), overhead-compensated.
 func Throughput(prev, cur QdiscStats, overheadBytes int) model.Sample
@@ -540,7 +538,7 @@ return UNKNOWN @ L0 (or L1 when one source alone is rising)
 
 ## control
 
-**Purpose.** Run the per-direction rate controller of docs/11 §6.5 on the 250 ms tick. It proposes actions, sends every proposal through `checker.Check`, enforces accepted actions only in LIVE, and logs every tick, also in SHADOW. It owns the fallback-episode ledger and the exploration state (docs/09 A.4).
+**Purpose.** Run the per-direction rate controller (docs/11 §6.5) every 250 ms: propose actions, check each with `checker.Check`, enforce accepted ones only in LIVE, and log every tick, also in SHADOW. It owns the fallback ledger and the exploration state (docs/09 A.4).
 
 **Public API.** `New(cfg, deps) *Controller`, `(*Controller).Tick(model.Snapshot)`, `(*Controller).EndEpisode(dir, now)`, `(*Controller).SetState(model.OpState)` and the `Diagnoser`/`Sink` interfaces in the skeleton below.
 
@@ -787,7 +785,7 @@ Points that are easy to get wrong:
 - **SHADOW.** Rate actions get `STATE_FORBIDS`; `WouldBe` records what LIVE would have received. Shadow decisions use the real, static S, so the shadow report compares first decisions per episode.
 - **Omitted for brevity.** The L3 re-baseline (`CutPayload{CMeasured}`) and the undo of a NOT_IMPROVED or INCONCLUSIVE fallback step, which `receipt` proposes as `RevertToRechecked`.
 
-**Errors.** An enforce error is logged with the action, and `reconcile` takes over on the next tick (compensate, retry at most 3 times, or SAFE). `Tick` itself never returns an error and never blocks.
+**Errors.** An enforce error is logged, and `reconcile` takes over on the next tick (compensate, ≤ 3 retries, or SAFE). `Tick` never returns an error or blocks.
 
 **Tests.** `TestC1OneStepCut100to20` (fake snapshot: S = 100 000, Ĝ = 20 100 → target 18 090), `TestCutWithoutGhatUsesPoint75`, `TestNoSpiralAfterThreeCuts`, `TestFallbackBudgetAcrossEpisodes`, `TestBackoffReturnsToLastGood`, `TestShadowNeverEnforces`; properties `PropEnvelope` (S_min ≤ S ≤ S_max) and `PropBudgetNeverExceeded`; `TestReplayBitForBit`.
 
@@ -1021,7 +1019,7 @@ func Restore(path string, ntpSynced bool, bootID string, now time.Duration) (*Ta
 
 ## sanction
 
-**Purpose.** Turn envelope violations into per-flow sanctions and escalate repeat offences (docs/11 §5.7). The kernel applies the first 60 s sanction on its own. This package handles NFLOG group 8 events, the standing-queue rule (≥ 3 s in a preferential tin) and escalation.
+**Purpose.** Handle envelope violations (docs/11 §5.7). The kernel applies the first 60 s sanction itself; this package handles NFLOG group 8 events, the standing-queue rule (≥ 3 s in a preferential tin) and escalation.
 
 **Public API.**
 
@@ -1029,12 +1027,7 @@ func Restore(path string, ntpSynced bool, bootID string, now time.Duration) (*Ta
 package sanction
 
 type Kind uint8 // Rate, PPS, StandingQueue
-type Event struct {
-    CtID  uint32
-    Kind  Kind
-    Class model.Class
-    At    time.Duration
-}
+type Event struct{ /* ct id, kind, class, At */ }
 type Book struct{ /* per-flow offence history */ }
 func (b *Book) OnViolation(e Event, now time.Duration) (model.Action, bool) // ESCALATE
 func (b *Book) StandingQueue(tins []observe.TinStats, top TopFlows,
@@ -1056,7 +1049,7 @@ func (b *Book) Save(path string) error // sanctions.json, ≤ 1 write/min
 
 ## checker
 
-**Purpose.** Check every proposed action against the implemented rules before anything reaches the enforcer (docs/09 A.1 as updated by docs/11 §8.1 and C1). It returns ACCEPT or a refusal code with a reason. It **checks admissibility against the implemented rules**; it does not establish that an action is beneficial or optimal.
+**Purpose.** Check every proposed action before anything reaches the enforcer (docs/09 A.1, updated by docs/11 §8.1 and C1), returning ACCEPT or a refusal code with a reason. It **checks admissibility against the implemented rules**; it does not establish that an action helps.
 
 **Public API.** `Check(a Action, s Snapshot, b Budgets, l LeaseTable, st OpState, cfg Limits) Verdict`, exactly as in docs/11 §14.2. Because `Check` is pure, everything time-dependent is passed in:
 - `Limits.Now` carries the caller's monotonic time;
@@ -1434,7 +1427,7 @@ Chapter 12 gives a worked example for every refusal code; each example becomes o
 
 **Errors.** None: a refusal is a value. A malformed payload (wrong type) yields the most conservative refusal for that action type.
 
-**Tests.** `TestCheckRefusals` (table with one row per code, as above), `TestAllCodesCovered` (fails if any entry of `AllCodes` has no row), `TestSafeAlwaysAdmissible`, `TestPureNoGlobals` (runs `Check` concurrently under `-race`), `FuzzCheckNeverPanics`.
+**Tests.** `TestCheckRefusals` (one row per code; examples in chapter 12), `TestAllCodesCovered` (fails if any entry of `AllCodes` has no row), `TestSafeAlwaysAdmissible`, `TestPureNoGlobals` (runs `Check` concurrently under `-race`), `FuzzCheckNeverPanics`.
 
 **Acceptance.**
 - 100% of refusal codes have a test (CI gate).
