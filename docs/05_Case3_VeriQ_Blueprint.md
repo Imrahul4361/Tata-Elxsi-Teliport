@@ -1,4 +1,4 @@
-# 05 · Case 3 Solution Blueprint: **VeriQ** (v2)
+# 05 · Case 3 Solution Blueprint: **VeriQ** (v2.1)
 ### Intent-aware home QoS with measurable outcomes, bounded adaptation and explainable recovery
 *Case Study 3 (MCV): Adaptive QoS Engine for Mixed Home Broadband Traffic*
 
@@ -11,6 +11,15 @@
 > 6. The privacy statement is precise.
 > 7. Baselines are the **real, tuned** tools, plus ablations.
 > 8. A scope split separates the **MVP spine** from **stretch tracks**.
+>
+> **v2.1 (12 Oct 2026)** adds lessons from a competing team's public prototype (see `docs/07_Competitor_Analysis_AQE.md`). These are **ideas only, no code**:
+> 1. Active packet-train capacity probing (SLoPS, Jain & Dovrolis 2002) for idle links.
+> 2. An estimator ground-truth test matrix E1–E8.
+> 3. An evidence ledger and a CI claims check.
+> 4. A requirement traceability matrix.
+> 5. A fault-injection script and a discrepancy log.
+> 6. Deployment hygiene (systemd, install/verify/reset, netns-vs-real-NIC backend).
+> 7. Concrete API authentication.
 >
 > Everything below is a **design with targets, not measured results**, until the lab produces them.
 
@@ -114,6 +123,27 @@ flowchart LR
 
 **Estimation:** state-space filter on capacity, plus change-point detection on delay and delivery rate. Output: capacity μ ± σ per direction.
 
+**Active probing (v2.1).** Delay-based tracking is blind on an **idle** link: no traffic, no signal. VeriQ adds a short **SLoPS-style packet-train probe** (Self-Loading Periodic Streams; Jain & Dovrolis, 2002, the *pathload* method) towards an **operator-hosted reflector**. It sends paced streams at trial rates and checks whether one-way delays trend upward, which brackets the available bandwidth. Rules:
+- **When it runs:** at start-up, after a suspected change, and periodically at a low duty cycle. It never runs while a call is active unless capacity is unknown.
+- **Overhead:** probe traffic is measured and reported.
+- **No reflector available:** passive tracking only, and the estimate is marked as such.
+- **Pacing:** in C or the kernel for production, because user-space pacing jitters.
+
+**Estimator ground-truth tests:**
+
+| ID | Test | Checks |
+|---|---|---|
+| E1 | Static 100 Mbps | Steady-state accuracy |
+| E2 | Static 20 Mbps | Steady-state accuracy |
+| E3 | Drop 100 → 20 | Settle time from the drop event |
+| E4 | Recovery 20 → 100 | Upward probing speed |
+| E5 | Bursty cross-traffic | Robustness to competing load |
+| E6 | Many concurrent flows | Robustness under heavy use |
+| E7 | Remote-path delay | Must **not** cut the shaper |
+| E8 | Lying reflector | Must be ignored |
+
+Each test reports relative error, whether the [μ−2σ, μ+2σ] range contains the true value, settle time measured **from the injected event**, and probe overhead.
+
 **Fault localisation runs before any action:**
 
 | Evidence | Diagnosis | Action |
@@ -167,6 +197,7 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 - Leases always expire; renewing requires re-authentication.
 - Conflicts resolve as safety > household rules > priority > age.
 - **Interfaces:** REST + UI. A TR-181-style data-model / TR-369 USP mapping is **designed, not implemented** in the MVP.
+- **API security:** token auth with constant-time comparison, binding to loopback/LAN only by default, rate limits, and an append-only audit log of every lease decision. Example credentials in the repo are clearly fictitious.
 
 ### M8 · Telemetry, Grafana and the **3D twin with replay**
 - Every visual element carries one of **three encodings**:
@@ -187,6 +218,11 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
   5. VeriQ.
 - **Ablations:** VeriQ without the classifier, without fault localisation, and without the HTB guaranteed mode. **This proves VeriQ is more than a CAKE wrapper, or tells us honestly where it isn't.**
 - **Statistics for claims:** ≥10 runs per arm per scenario in **randomised order**; medians with bootstrap 95% CIs; Holm correction across metrics; an environment fingerprint on every report.
+- **Evidence ledger (v2.1):** each run stores raw files plus a manifest (scenario, arm, seed, config hash, git commit, kernel and tool versions). Reports are generated **only** from the ledger.
+- **Claims check in CI:** a script recomputes every number used in the README and slides from raw data, and fails CI if any is not reproducible within tolerance.
+- **Requirement traceability matrix:** `docs/traceability.md` maps each Case 3 requirement → module → test → evidence file.
+- **Fault injection + discrepancy log:** `inject_fault.sh` covers WAN drop, remote delay, lying reflector and controller kill. `docs/discrepancies.md` records every result that differed from expectation, and why.
+- **Direction pitfall:** `tc` shapes egress only. Download shaping sits on the LAN-facing egress (or IFB on WAN ingress), and every test asserts that its flows cross the shaped interface.
 
 ---
 
@@ -216,7 +252,8 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 5. receipts (improved / degraded / inconclusive);
 6. WebRTC + DASH harness;
 7. Grafana + recorded replay;
-8. the five-arm + ablation evaluation.
+8. the five-arm + ablation evaluation;
+9. deployment hygiene: interface discovery, a netns/real-NIC backend, systemd unit, install / verify / reset scripts, evidence ledger + claims check.
 
 **Stretch, in priority order:**
 1. 3D twin (replay first, live second);
@@ -275,6 +312,7 @@ Licences: Flent (GPL-3), irtt (GPL-2) and cake-autorate (GPL) are run as externa
 - ITU-T G.107 E-model: <https://www.itu.int/ITU-T/recommendations/rec.aspx?rec=12505>
 - Conformal prediction primer (coverage semantics): <https://arxiv.org/abs/2107.07511>
 - CESNET DataZoo datasets: <https://cesnet.github.io/cesnet-datazoo/datasets_overview/>
+- Jain & Dovrolis, "Pathload: a measurement tool for end-to-end available bandwidth" (PAM 2002) and "End-to-end available bandwidth: measurement methodology, dynamics, and relation with TCP throughput" (SIGCOMM 2002): SLoPS
 - Mann–Whitney assumptions (independence), SciPy: <https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.mannwhitneyu.html>
 - WebRTC inbound-rtp stats: <https://developer.mozilla.org/en-US/docs/Web/API/RTCInboundRtpStreamStats>
 - Cilium Bandwidth Manager (Kubernetes EDT): <https://docs.cilium.io/en/stable/network/kubernetes/bandwidth-manager/>

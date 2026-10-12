@@ -122,6 +122,9 @@ Run **everything offline** with a local Jitsi Meet server: venue Wi-Fi must neve
 9. **"What is emulated?"** The ISP bottleneck (tbf/netem). It is labelled everywhere, and validated on the physical kit.
 10. **"What would you build next?"** Wi-Fi airtime control, the CPE port (Go + libbpf), USP agent, field trial on a real DOCSIS/FWA line.
 
+11. **"Other teams also built CAKE-based controllers. How are you different?"** We report what users feel (WebRTC freezes, DASH stalls), not just ping. We diagnose the cause before acting, give real guaranteed rates for intents, abstain on uncertain flows, and compare ourselves against the real tuned SQM-CAKE and cake-autorate with confidence intervals. See `docs/07`.
+12. **"How do you know capacity on an idle link?"** A short SLoPS-style packet-train probe (Jain & Dovrolis) to an operator-hosted reflector, at low duty cycle and never during an active call unless capacity is unknown. With no reflector, VeriQ falls back to passive tracking and labels the estimate.
+
 ## 10. Credibility rules for every slide
 - Every visual is tagged **measured**, **estimated** or **illustrative**. The ISP queue tank is always "inferred".
 - Targets go on design slides. Results slides show only measured numbers with n, CIs and the environment fingerprint.

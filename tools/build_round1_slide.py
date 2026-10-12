@@ -245,7 +245,7 @@ def build_case3(slide):
     # row B: closed loop
     flow_strip(slide, 2.78, 1.62, "Three speeds: fast guardrails (sub-second) · outcome receipts (tens of seconds) · controlled experiments (lab, for claims)", [
         (1.86, "Observe", "Header + timing features of first packets per flow; v4/v6; no payload"),
-        (2.12, "Understand", "Early calibrated classifier (abstains) + capacity estimate μ ± σ + fault localiser (near/far probes)"),
+        (2.12, "Understand", "Early calibrated classifier (abstains) + capacity μ ± σ (delay tracking + active packet-train probes) + fault localiser"),
         (2.04, "Decide", "Bounded guardrails: shaper = μ − kσ, change-point fast path · leases within budget"),
         (1.86, "Enforce", "CAKE (default) or HTB guaranteed mode; ordered, versioned, read-back apply"),
         (2.04, "Assess", "Receipts on WebRTC freezes, DASH rebuffers, delay, progress; estimated MOS labelled"),

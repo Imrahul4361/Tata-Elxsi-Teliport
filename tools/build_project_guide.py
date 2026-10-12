@@ -560,7 +560,8 @@ modules = [
      "Estimates the current internet speed (with a ± range) and diagnoses <b>where</b> a problem is before VeriQ "
      "acts. Chapter 10 explains this in detail.",
      "Sends tiny timing probes to a nearby server and to far servers, watches its own queue, and uses change "
-     "detection to notice sudden speed drops.",
+     "detection to notice sudden speed drops. On an idle line (no traffic to learn from) it sends a short burst "
+     "of paced test packets to a reflector server (the SLoPS method by Jain &amp; Dovrolis) to find the speed.",
      "Speed falls 100 → 20 Mbps: near and far probes both slow down while the router's own queue is empty → "
      "diagnosis 'WAN capacity dropped'."),
     ("M4 · Policy Engine: 'the decision maker'",
@@ -970,6 +971,53 @@ bullets(["Tata Elxsi Q1 FY27 press release and investor presentation (14 July 20
          "draft (2026)",
          "CESNET-QUIC22 dataset paper; WebRTC statistics (MDN); Cilium Bandwidth Manager documentation",
          "Full links are in docs/01, docs/05 and docs/06 of the project repository."])
+
+# ---------------------------------------------------------------- competitor
+h1("20. A rival team's prototype, and what we learned")
+p("On 12 October we studied a public GitHub repository (adaptive-qos-engine). It contains the exact Case 3 problem "
+  "statement and was updated on 9 October 2026, so it is almost certainly <b>another team in your case</b>. "
+  "It is a real, working prototype: about 5,900 lines of Python, 97 tests, scenario scripts and an evidence database.")
+box("Two rules", ["<b>Copy no code.</b> The repo has no licence (all rights reserved), and copying a competitor "
+                  "would be plagiarism and could get you disqualified. We only adopt general practices and "
+                  "published academic methods.",
+                  "<b>The competition is real.</b> Start building now, not after the shortlist."], "stop")
+h2("Where VeriQ is stronger")
+table([
+    ["Topic", "Their prototype", "VeriQ"],
+    ["Classifier", "Per-packet length, TTL and timing; trained on 3 iperf3 test generators (99.1% on easy "
+     "synthetic data)", "Whole-flow features on real WebRTC and DASH traffic; says 'not sure'; tested on new "
+     "traffic"],
+    ["Checking experience", "3 pings, pass if under 60 ms", "Real call freezes and video stalls; can say "
+     "'inconclusive'"],
+    ["Rollback", "Fixed threshold, can undo a good change after the line itself got worse",
+     "Recalculated for current conditions"],
+    ["Cause diagnosis", "None", "WAN vs remote vs Wi-Fi vs bad probe"],
+    ["Guaranteed minimums", "CAKE tuning trick, no reservation", "HTB guaranteed rates + budget + measured progress"],
+    ["Priority labels", "Rewrites DSCP (labels leak to the ISP)", "Internal marks only"],
+    ["Intents", "Natural-language parser with low confidence (the case warns against chat-only AI)",
+     "Structured, authenticated, expiring leases"],
+    ["Baselines", "Normal router + a weak passive estimator", "Real tuned SQM-CAKE and cake-autorate + ablations"],
+    ["Headline numbers", "0.62 ms RTT (no internet delay emulated); 0.048 s adaptation timed from the "
+     "estimator call", "Realistic base delay; time measured from the actual drop; 10+ runs with confidence "
+     "intervals"],
+], [3.2, 6.4, 6.8])
+h2("Good ideas we adopted (re-built our own way)")
+numbered(["<b>Active probing on an idle line</b> (SLoPS, a published 2002 method), with fallback when no reflector "
+          "server exists",
+          "<b>Estimator test list E1–E8</b>: static 100, static 20, drop, recovery, bursty traffic, many flows, "
+          "plus our own remote-delay and lying-reflector tests",
+          "<b>Evidence ledger</b>: every run saves raw data plus settings; reports come only from it",
+          "<b>Claims check</b>: a script recomputes every number on your slides, and fails if any can't be "
+          "reproduced",
+          "<b>Traceability matrix</b>: each case requirement → module → test → evidence file",
+          "<b>Fault-injection script and a discrepancy log</b> (write down every surprise)",
+          "<b>Deployment hygiene</b>: systemd service, install / verify / reset scripts, auto-detect interfaces",
+          "<b>Secure API</b>: token check, local-only access, rate limits, audit log",
+          "<b>Pitfall</b>: tc only shapes outgoing traffic, so always check that test traffic passes the shaped "
+          "interface"])
+box("Pitch sentence (never name the other team)", "“Many CAKE-based controllers report ping. VeriQ reports what "
+    "users feel, diagnoses the cause before acting, and compares itself honestly with the best open-source tools.”",
+    "tip")
 
 # ---------------------------------------------------------------- appendix
 h1("Appendix: the other cases, and what the external review changed")

@@ -24,6 +24,7 @@ The earlier analysis recommended Case 4 (LabelTwin). That work is kept below for
 | `docs/04_Execution_Playbook.md` | Case 4 playbook (reference) |
 | **`docs/05_Case3_VeriQ_Blueprint.md`** | **VeriQ full design**: why generic QoS fails, architecture, 9 module contracts, 8 scenarios, AI vs baseline, safety properties, known limitations, scaling path, stack |
 | **`docs/06_Case3_VeriQ_Playbook.md`** | **Standout assets ranked** (physical WAN-drop kit, split-screen video, 3D twin…), bill of materials, video script, 3D twin spec, timeline, roles, reading list, panel Q&A |
+| **`docs/07_Competitor_Analysis_AQE.md`** | **Competitor analysis**: a rival team's public Case 3 prototype; where VeriQ is stronger, the ideas adopted (no code copied), and what to avoid |
 | **`lab/quickstart_bufferbloat.sh`** | **Day-0 lab**: builds an emulated home network from network namespaces and measures bufferbloat for FIFO / short-buffer shaper / fq_codel / CAKE arms |
 | **`submission/Round1_Case3_VeriQ.pptx`** | **Round 1 entry for Case 3** (slide 2 is the one-slide submission) + `_preview.png` |
 | `submission/Round1_Case4_LabelTwin.pptx` | Round 1 submission built on the official template (slide 2 is the one-slide entry). Replace `<Team Name>` / `<College>` / members. |
