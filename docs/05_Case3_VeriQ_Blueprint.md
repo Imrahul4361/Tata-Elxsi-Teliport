@@ -1,5 +1,6 @@
-# 05 · Case 3 Solution Blueprint: **VeriQ** (v2.1)
-### Intent-aware home QoS with measurable outcomes, bounded adaptation and explainable recovery
+# 05 · Case 3 Solution Blueprint: **VeriQ** (v3.1)
+### Finds the cause, protects what you chose, and proves it
+*Intent-aware home QoS with measurable outcomes, bounded adaptation and explainable recovery*
 *Case Study 3 (MCV): Adaptive QoS Engine for Mixed Home Broadband Traffic*
 
 > **v2 changes (after external review).** We merged the strongest engineering safeguards of the "IntentGuard" proposal into VeriQ and narrowed every claim we cannot prove. Main changes:
@@ -20,6 +21,21 @@
 > 5. A fault-injection script and a discrepancy log.
 > 6. Deployment hygiene (systemd, install/verify/reset, netns-vs-real-NIC backend).
 > 7. Concrete API authentication.
+>
+> **v3.1 (12 Oct 2026): locked core + verified upgrades.** The v2.1 core is **locked**: CAKE default, HTB lease mode, the fault localiser, three-speed receipts and honest statistics. The best parts of the v3 research pass are added **with six corrections applied**. Full decision log: `docs/08_VeriQ_v3.1_Decisions.md`.
+>
+> *Added to the core:*
+> 1. Marks-first classification (NQB DSCP 45 / L4S ECT(1)) with a behaviour check.
+> 2. The classifier "honesty kit" (per-flow and per-time splits, no shortcut features).
+> 3. Fast-detector starting values from cake-autorate's published defaults.
+> 4. A **bounded fallback action** when the diagnosis is uncertain.
+> 5. A UDPST (RFC 9946) idle-capacity probe.
+> 6. Shadow (dry-run) mode, a per-decision log, health states and retry with backoff.
+> 7. RPM bands.
+> 8. **QoO scores computed offline** from harness data.
+> 9. Harness-first build order and a tiered run matrix.
+>
+> *Moved to post-core experiments:* the NQB lane, DualPI2, the header-only call-quality estimator, live QoO in receipts, and the chat box.
 >
 > Everything below is a **design with targets, not measured results**, until the lab produces them.
 
@@ -111,7 +127,18 @@ flowchart LR
   6. how the earliest confident prefix was selected (on validation data, never on test).
 - **Data:** independently labelled **household workloads** from our lab apps are the primary data. **CESNET-QUIC22** (153M QUIC flows, 102 service classes) is a *secondary* benchmark, with a documented service → category mapping and feature-compatibility notes. Its service labels do not directly say whether traffic needs interactive protection.
 - **Correction loop:** a user relabel becomes an override rule plus a labelled sample (audit-logged).
-- **Baseline:** port/protocol rules.
+- **Baselines:** port/protocol rules, **and qosify-style heuristics** (small-packet boost, bulk detection by packet rate). This is the strongest simple rival.
+- **Marks first (v3.1).** VeriQ reads the DSCP and ECN bits the app set.
+  - **DSCP 45** (NQB, RFC 9956) or **ECT(1)** (L4S) counts as a *hint*, trusted only while the flow behaves: low rate (roughly ≤ 1% of capacity for NQB) and not building a queue.
+  - A marked flow that misbehaves is treated as unmarked.
+  - Only unmarked flows go to the classifier. This answers the operator view (e.g. Comcast's 2026 deployment draft) that apps should mark rather than networks guess.
+- **What a singleton conformal set means:** VeriQ *acts* only on a single-class set. That is a rule for when to act; it does **not** claim the label is correct. Correctness is reported separately as selective accuracy.
+- **Honesty kit (v3.1).** Lesson from SIGCOMM 2025, "The Sweet Danger of Sugar": leaky splits inflated famous encrypted-traffic results, and shortcut features collapse under realistic tests.
+  - Split **by flow** (never by packet) and **by time** (train earlier, test later).
+  - **Hold out whole apps**, to test abstention.
+  - **Remove** IP addresses, ports, TTL, TCP sequence/ack numbers and timestamps from the features.
+  - Report **macro-F1** next to accuracy.
+  - Run an **occlusion test** (drop one feature group at a time). A collapse is a *lead to investigate* for a shortcut, not proof of one.
 
 ### M3 · Capacity Estimator + **Fault Localiser**
 **Signals:**
@@ -144,6 +171,34 @@ flowchart LR
 
 Each test reports relative error, whether the [μ−2σ, μ+2σ] range contains the true value, settle time measured **from the injected event**, and probe overhead.
 
+**Fast detector: starting values (v3.1).** VeriQ starts from **cake-autorate's published defaults** and tunes them in the lab. It does not invent constants:
+- per-reflector baselines that rise very slowly and fall fast;
+- "delayed" = more than about 30 ms above baseline;
+- bufferbloat flagged when **3 of the last 6** samples are delayed;
+- cut by up to ×0.75, raise by ≤ ×1.04 only under high load and low delay;
+- refractory periods (≈ 300 ms after a cut, ≈ 1 s between drifts);
+- probe sleep when idle.
+
+The difference from cake-autorate: a *confirmed* WAN diagnosis allows the full cut, and a *remote* diagnosis holds.
+
+**How the probes relate (corrected in v3.1).** The near-hop and far-reflector round trips are **overlapping observations, not independent legs**: a far RTT *contains* the access link and the near hop. VeriQ therefore never adds segment delays together (percentiles do not add anyway). It compares **patterns of change** against each probe's own baseline:
+- near and far rising together, with our queue empty, points to the access link;
+- far rising alone points beyond it.
+
+The router's own queue delay comes from qdisc statistics, which *are* separately observable. Wi-Fi delay is only visible from client-side measurements or driver statistics, so router-originated probes say nothing about the Wi-Fi hop.
+
+**Bounded fallback when the diagnosis is uncertain (v3.1).** "Cut only when WAN is confirmed" would leave real congestion untreated whenever the evidence is ambiguous. So if bufferbloat is detected but the localiser is uncertain, VeriQ:
+1. applies **one small, bounded cut** (≤ 10% of the shaper);
+2. holds for one refractory period;
+3. records `diagnosis=UNCERTAIN, action=bounded_fallback`.
+
+It keeps the cut only if queuing delay improves, and reverts otherwise. Repeated uncertainty raises an alert instead of cutting again and again.
+
+**Idle-capacity probe (v3.1): UDPST first.** The preferred probe is the **UDP Speed Test protocol (RFC 9946, April 2026)**, the protocol behind the Broadband Forum's TR-471 IP-layer capacity test. TR-471 is modelled in TR-181 as `Device.IP.Diagnostics.IPLayerCapacityMetrics`, which an operator can trigger remotely. SLoPS remains an alternative method.
+- **Both** need a cooperating server, so neither is a fallback for the other's missing server.
+- With no server, VeriQ tracks passively and labels the estimate as passive.
+- Probes never run during an active call lease, and are capped in size.
+
 **Fault localisation runs before any action:**
 
 | Evidence | Diagnosis | Action |
@@ -166,14 +221,24 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 
 ### M5 · Enforcer: two modes with honest semantics
 1. **Default mode: CAKE** (`diffserv4`, per-host fairness, overhead compensation). This gives **bounded preferential treatment** (priority sharing with tin thresholds), **not hard minimum rates**. Fairness is *measured*.
-2. **Guaranteed mode: HTB hierarchy** under the shaper: one class per traffic class or lease, with `rate` = guaranteed floor and `ceil` = shaper rate, and fq_codel leaves. This is what gives **real minimum rates** while intents are active. Admission control rejects a lease that would push the sum of guaranteed rates over **shaper × (1 − reserve)**.
+2. **Lease mode: HTB hierarchy** under the shaper. This is what gives **real minimum rates** while intents are active. The tree is specified exactly (v3.1):
+   - parent class `rate = ceil = S` (the shaper rate);
+   - **one Default class**: `rate = S − ΣL`, `ceil = S`, with fq_codel inside;
+   - **one class per granted lease *i***: `rate = Lᵢ`, `ceil = S`, with fq_codel inside;
+   - **budget invariant: ΣL ≤ 0.6·S**, so Default always keeps a guaranteed `rate ≥ 0.4·S`;
+   - **when S shrinks** (e.g. a WAN drop), all lease rates are rescaled proportionally to restore the invariant, and lease holders are told their rate dropped;
+   - a device gets **at most one lease class**, so overlapping requests are merged;
+   - a filter maps the device's traffic to its lease class; everything else goes to Default.
+
+   Admission control grants, part-grants or refuses each request against the budget, and gives the reason. Weighting *within* each class is done by fq_codel, so no HTB "equal weight" feature is needed. Mode switches (CAKE ↔ lease tree) follow the ordered-apply rules below.
 
 **Apply semantics (narrowed):**
 - Multi-step netlink updates are **not atomic**. Updates are **ordered so every intermediate state is safe**: change rates before removing classes, add filters after classes exist.
 - Each update is versioned, read back and **compensated** on mismatch.
 
-**DSCP:**
-- VeriQ classification sets `skb->priority` or marks and **does not rewrite DSCP**.
+**DSCP and ECN (wording corrected in v3.1):**
+- VeriQ classification sets `skb->priority` or firewall marks and **does not rewrite DSCP**.
+- VeriQ itself sets no ECN bits. However, its AQMs (CAKE, fq_codel) **mark ECN-capable packets CE** as their normal congestion signal instead of dropping them. That is ECN working as designed, not a rewrite of the app's intent.
 - DSCP that apps set themselves passes upstream **unless `wash` is enabled**, which is configurable and documented.
 
 **SAFE profile:** a static conservative CAKE shaper at last-known-good capacity minus margin. This is not plain fq_codel, which cannot fix an upstream bottleneck. Fallback time is a **measured target**, not a promise.
@@ -196,6 +261,7 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 - A **promotion budget** sets the maximum total guaranteed share all leases may hold, implemented as HTB guaranteed rates. Admission control decides grant / partial grant / deny, and gives the reason.
 - Leases always expire; renewing requires re-authentication.
 - Conflicts resolve as safety > household rules > priority > age.
+- **User corrections and overrides pass the same checks** (budget, protection, schema) as new leases. A correction can never bypass the budget.
 - **Interfaces:** REST + UI. A TR-181-style data-model / TR-369 USP mapping is **designed, not implemented** in the MVP.
 - **API security:** token auth with constant-time comparison, binding to loopback/LAN only by default, rate limits, and an append-only audit log of every lease decision. Example credentials in the repo are clearly fictitious.
 
@@ -226,6 +292,39 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 
 ---
 
+## 3A. v3.1 additions to the core
+
+### Safety supervisor: shadow mode, decision log, health states
+- **Health states:** `SHADOW` (dry-run) → `LIVE` (only after a person approves) → `DEGRADED` (any error) → `SAFE` (the watchdog's fixed shaper) → back to `SHADOW` after a self-check passes. `DISABLED` means **clean up**: restore the configured rates, remove VeriQ's overrides, report "disabled".
+- **Shadow mode:** the whole loop runs, but the Enforcer only *writes what it would do*. Demo line: "VeriQ ran in shadow for an hour before it was allowed to touch the queue."
+- **Decision log:** one row per decision, **including "do nothing"**. Columns: time, state, direction, shaper, achieved rate, own-queue delay, near/far probe deltas, diagnosis + confidence, candidate action, target, reason, blocker, outcome (`applied / shadow / skipped / failed`), lease ids.
+- **Retries:** a failed apply does not start the cooldown. It retries with **exponential backoff** (with a cap), then drops to `DEGRADED`.
+- **What shadow mode can and cannot prove:** running VeriQ in shadow beside cake-autorate gives a **disagreement report** (when and how their decisions differ). Nobody knows what would have happened in a real home, so shadow logs **cannot count "avoided wrong cuts"**. Whether a disagreement was right is judged **only in the lab**, where the injected fault is known.
+
+### QoO scoring: offline first
+VeriQ computes **Quality of Outcome** scores (IETF `draft-ietf-ippm-qoo-11`, May 2026, still a draft) **offline from data the harness already measures**. This keeps the IETF-aligned story without risking the live loop.
+- **How it works:** per class, two requirement profiles: "works perfectly" and "unusable". Each profile gives delay at chosen percentiles, a loss ratio and a minimum throughput. Each measured percentile is placed on a 0–100% scale between the two profiles, and the class score is the worst of these.
+- **Measurement rules (v3.1 corrections):**
+  1. **Same statistic on both sides.** A p95 requirement is compared with a measured p95, never with an added-delay p95 or a p99.
+  2. **Sample-size floor.** Enough samples for the percentile: p95 needs ≳ 100 and p99 needs ≳ 1,000 samples in the window. **p99.9 is not reported** unless there are ≳ 10,000. Otherwise the score is "insufficient data".
+  3. **Coverage label.** Every score states the path it covers. Router → reflector probes exclude the Wi-Fi hop; harness client probes include it.
+  4. **Throughput minimum** is judged only when the app *wanted* that rate (demand ≥ the minimum). For a quiet, app-limited flow it is "not assessed", because a quiet app says nothing about the line's capacity.
+  5. **Metadata on every score:** method, probe size, rate (≥ 10 Hz), path, direction, start, duration, sample count.
+- Profiles are **our own calibration** (the draft gives no standard values). They are calibrated in the lab by worsening delay until real WebRTC freezes or DASH stalls start, and labelled as such on slides. QoO **inside live receipts** is a post-core experiment.
+
+### Responsiveness
+RPM (draft-09) is reported **with its band** (Poor / Fair / Good / Excellent) and the draft's confidence label. It runs on a schedule, never during a lease.
+
+### Post-core experiments (only after the core runs end to end)
+| Experiment | Correct framing (v3.1) |
+|---|---|
+| **NQB lane** (RFC 9956) | A third HTB child with a shallow buffer (≤ 10 ms), **not** a priority lane, plus traffic protection that moves misbehaving flows back to Default. Budget redefined to fit: e.g. ΣL ≤ 0.5·S, NQB `rate` = a small fixed share, Default keeps the rest. **A flow that is both leased and NQB goes to its lease class.** No L4S traffic in this lane: RFC 9956 allows NQB/L4S queue sharing only inside a proper DualQ node with coupled AQM. |
+| **DualPI2 arm** | A separate baseline arm (mainline since Linux 6.17), only if the lab kernel has `sch_dualpi2` |
+| **Header-only call-quality estimator** | Re-implemented from Sharma et al., IMC 2023: frame boundaries from packet-size changes, plus a small model; the paper reports within 2 fps for 83% of one-second intervals in 15 homes. Trained on our harness's WebRTC logs; always labelled "estimated"; accuracy reported per app. Multi-party calls are untested. |
+| **Live QoO in receipts** | After offline QoO is calibrated |
+| **Chat box for leases** | A model only *fills the lease form*; schema, budget and conflict checks then apply; the user confirms |
+| **5G link statistics** | Used only as one more input to the estimate, never alone |
+
 ## 4. Scenarios and targets (targets are plans, not results)
 
 | # | Scenario | Target |
@@ -239,21 +338,31 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 | S7 | Lying reflector | Down-weighted; no action |
 | S8 | Controller crash | SAFE shaper engaged; time-to-safe measured |
 | S9 | IPv6-only client | Same behaviour as IPv4 |
+| S10 | Wi-Fi is the bottleneck (weak client) | Diagnosed as Wi-Fi (from client-side probes / driver stats); WAN shaper untouched |
+| S11 | Bulk flow falsely marked DSCP 45 | Behaviour check rejects the mark; flow treated as unmarked within 1 s |
+| S12 | One hour of shadow mode beside cake-autorate | Disagreement report; each disagreement judged against lab ground truth |
+| S13 | Ambiguous evidence (injected) | Bounded fallback cut ≤ 10%, kept only if delay improves; logged as UNCERTAIN |
+
+**Tiered run matrix (v3.1).** Don't start with hundreds of runs:
+- **Tier 1:** 4 arms (FIFO, SQM-CAKE, cake-autorate, VeriQ) × 3 scenarios (S1, S2, S6) × 10 runs = **120 runs**.
+- **Tier 2:** add the fq_codel and qosify-style arms, plus S3–S5, S7, S8 and S10.
+- **Tier 3:** ablations and the remaining scenarios.
 
 **Judge-chosen faults (finale):** the judge picks a fault from a menu on the physical kit. VeriQ responds **from telemetry only**, never from a hidden scenario label.
 
 ## 5. MVP spine vs stretch tracks (scope discipline)
 
-**MVP spine (must work end-to-end by 13 Dec):**
-1. netns lab + scenario runner + real baselines;
-2. userspace observer + small calibrated classifier with abstention;
-3. capacity estimator + fault localiser (WAN / remote / own queue / bad reflector);
-4. CAKE default + HTB guaranteed mode + leases with budget;
-5. receipts (improved / degraded / inconclusive);
-6. WebRTC + DASH harness;
-7. Grafana + recorded replay;
-8. the five-arm + ablation evaluation;
-9. deployment hygiene: interface discovery, a netns/real-NIC backend, systemd unit, install / verify / reset scripts, evidence ledger + claims check.
+**MVP spine (must work end-to-end by 13 Dec), in build order (v3.1: harness first):**
+1. **netns lab + scenario runner + WebRTC/DASH harness + evidence ledger.** This produces the data that the classifier, QoO and receipts all need, so it comes first.
+2. Real baselines (SQM-CAKE, cake-autorate) + Tier-1 runs.
+3. Userspace observer reading DSCP/ECN + marks-first classifier with the honesty kit and abstention.
+4. Capacity estimator (cake-autorate starting values, UDPST idle probe) + fault localiser + bounded fallback.
+5. CAKE default + HTB lease mode with the exact budget invariant.
+6. Safety supervisor: shadow mode, decision log, health states, watchdog.
+7. Receipts (improved / degraded / inconclusive) + **offline QoO**.
+8. Grafana + recorded replay.
+9. Tier-2/3 evaluation + ablations.
+10. Deployment hygiene: interface discovery, a netns/real-NIC backend, systemd unit, install / verify / reset scripts, claims check.
 
 **Stretch, in priority order:**
 1. 3D twin (replay first, live second);
@@ -262,7 +371,7 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 4. conformal sets on CESNET-QUIC22;
 5. Wi-Fi airtime control;
 6. TR-181/USP agent;
-7. L4S/DualPI2;
+7. post-core experiments in §3A (NQB lane, DualPI2 arm, call-quality estimator, live QoO, chat box);
 8. EDT/multi-queue scaling study;
 9. TLA+ model of the lease/rollback protocol.
 
@@ -275,6 +384,9 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 4. Guaranteed-mode floors are enforced by HTB `rate`, and **progress is measured**.
 5. Every applied config is versioned and read back.
 6. A watchdog engages the SAFE shaper on heartbeat loss, with time-to-safe measured.
+7. VeriQ never rewrites the DSCP of packets it forwards and never sets ECN bits itself. Its AQMs may mark ECN-capable packets CE as their normal congestion signal.
+8. Every decision, including "do nothing", is logged with a reason. New installs start in shadow mode.
+9. Leases never hold more than 60% of the shaper rate in total.
 
 **Known limitations:**
 1. Shaping below capacity costs a few % of throughput.
@@ -286,6 +398,9 @@ Every diagnosis carries a confidence, and it is evaluated in the lab against the
 7. Emulated WAN ≠ real DOCSIS/PON/5G schedulers, so all emulation is labelled.
 8. Receipts are operational evidence; causal claims come only from controlled experiments.
 9. **VeriQ must prove through ablations that it adds value beyond tuned CAKE and cake-autorate.**
+10. QoO profiles are our own calibration, and QoO is still an IETF draft.
+11. Shadow-mode logs show disagreements, not counterfactual outcomes.
+12. Many apps don't mark their traffic yet, so marks-first helps only where marks exist.
 
 ## 7. Industry path (designed, not built)
 - **Packaging:** RDK-B component / OpenWrt package; a TR-181 data-model extension plus a TR-369 USP agent for fleet management.
@@ -313,6 +428,11 @@ Licences: Flent (GPL-3), irtt (GPL-2) and cake-autorate (GPL) are run as externa
 - Conformal prediction primer (coverage semantics): <https://arxiv.org/abs/2107.07511>
 - CESNET DataZoo datasets: <https://cesnet.github.io/cesnet-datazoo/datasets_overview/>
 - Jain & Dovrolis, "Pathload: a measurement tool for end-to-end available bandwidth" (PAM 2002) and "End-to-end available bandwidth: measurement methodology, dynamics, and relation with TCP throughput" (SIGCOMM 2002): SLoPS
+- RFC 9956, NQB PHB (May 2026): <https://www.rfc-editor.org/rfc/rfc9956.html>
+- RFC 9946, UDP Speed Test Protocol for IP capacity (Apr 2026): <https://www.rfc-editor.org/rfc/rfc9946.html>
+- draft-ietf-ippm-qoo-11, Quality of Outcome (May 2026): <https://datatracker.ietf.org/doc/draft-ietf-ippm-qoo>
+- Zhao et al., "The Sweet Danger of Sugar", SIGCOMM 2025: <https://arxiv.org/abs/2507.16438>
+- Sharma et al., "Estimating WebRTC Video QoE Metrics Without Using Application Headers", IMC 2023: <https://arxiv.org/abs/2306.01194>
 - Mann–Whitney assumptions (independence), SciPy: <https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.mannwhitneyu.html>
 - WebRTC inbound-rtp stats: <https://developer.mozilla.org/en-US/docs/Web/API/RTCInboundRtpStreamStats>
 - Cilium Bandwidth Manager (Kubernetes EDT): <https://docs.cilium.io/en/stable/network/kubernetes/bandwidth-manager/>

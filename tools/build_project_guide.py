@@ -296,8 +296,8 @@ p("<b>VeriQ</b> is software that runs on the home router. It watches traffic wit
   "data, figures out what kind of traffic each flow is, tracks how fast the internet line really is right now, "
   "keeps the queues short, protects important things like a work call when the user asks, and "
   "<b>explains every decision with evidence</b>.")
-box("The pitch line", "“VeriQ adapts, measures, and explains: every decision comes with evidence, and every "
-    "claim with a method.”", "tip")
+box("The pitch line", "“VeriQ finds the cause, protects what you chose, and proves it.” "
+    "(Version 3.1: see Chapter 21 for the latest upgrades.)", "tip")
 h2("Why this can win")
 bullets([
     "<b>Few teams will pick it</b>: most students have never worked with Linux networking. We estimate only "
@@ -1018,6 +1018,65 @@ numbered(["<b>Active probing on an idle line</b> (SLoPS, a published 2002 method
 box("Pitch sentence (never name the other team)", "“Many CAKE-based controllers report ping. VeriQ reports what "
     "users feel, diagnoses the cause before acting, and compares itself honestly with the best open-source tools.”",
     "tip")
+
+# ---------------------------------------------------------------- v3.1
+h1("21. Version 3.1: the latest upgrades (core locked)")
+p("After more research (2025–2026 standards and papers), VeriQ was upgraded again. The rule was strict: "
+  "<b>the existing core is locked</b>. A new idea enters only if it makes VeriQ stronger without adding a "
+  "false claim or too much work. Everything else waits until the core works.")
+h2("Added to the core, in simple words")
+table([
+    ["Upgrade", "What it means", "Why judges will like it"],
+    ["Marks first", "Some apps label their own packets: 'I am smooth traffic' (DSCP 45, called NQB) or 'I am "
+     "L4S'. VeriQ trusts these labels first, as long as the flow behaves. Only unlabelled flows go to the "
+     "classifier.", "Matches what big operators (e.g. Comcast) say: apps should label, networks shouldn't guess"],
+    ["Honesty kit for the classifier", "Test on whole flows and on later days, hide some apps completely, and "
+     "remove 'cheat' features like IP address, port and TTL", "A 2025 study (SIGCOMM) showed famous 97% models "
+     "fall to about 20% when cheats are removed. We are honest from day one."],
+    ["cake-autorate's settings as a start", "Start from the published, tested numbers of the best open tool, "
+     "then tune", "No made-up constants; fair comparison"],
+    ["Small safe step when unsure", "If calls suffer but the cause is unclear, cut speed by at most 10%, keep "
+     "it only if delay improves, and log 'uncertain'", "Never ignores real congestion, never over-reacts"],
+    ["Standard speed test (UDPST)", "On an idle line, run the official UDP speed test (RFC 9946, from the "
+     "Broadband Forum's TR-471). Operators can already trigger it remotely.", "Speaks the operators' own "
+     "standards"],
+    ["Shadow mode + decision log", "A new install first runs 'pretend only' and writes what it <i>would</i> do. "
+     "Every decision, even 'do nothing', gets a log line with its reason.", "This is how real companies roll "
+     "out automation safely"],
+    ["Quality of Outcome (QoO) scores", "A 0–100% score per app type (calls, games, video), from a new IETF draft. "
+     "Computed <b>offline</b> from lab data first.", "The newest industry language for 'how good is it for the user'"],
+    ["Harness first", "Build the real call and video test lab first, because everything else needs its data. "
+     "Start with 120 runs, not 840.", "Shows planning maturity"],
+], [3.6, 7.6, 5.2])
+h2("Mistakes we caught and fixed")
+bullets([
+    "<b>Probes don't add up.</b> A ping to a far server already includes the near part of the path, so you can't "
+    "add 'segments' together. VeriQ compares how each probe <b>changes</b> instead.",
+    "<b>ECN wording.</b> CAKE itself marks some packets 'congestion experienced'. That is normal and good. VeriQ "
+    "never rewrites priority labels (DSCP) and sets no ECN bits itself.",
+    "<b>Statistics.</b> Compare a p95 with a p95, never mix statistics. You need many samples for rare "
+    "percentiles: no p99.9 from 300 samples.",
+    "<b>Coverage.</b> Pings from the router can't see Wi-Fi, so every score says which part of the path it covers.",
+    "<b>Shadow mode can't prove 'avoided mistakes'.</b> It only shows where VeriQ and cake-autorate disagree; "
+    "the lab decides who was right.",
+    "<b>Budget maths.</b> Leases can hold at most 60% of the speed. The default class always keeps at least 40%. "
+    "If the line slows, leases shrink fairly.",
+])
+h2("Waiting until the core works (post-core experiments)")
+bullets(["A separate 'smooth traffic' lane (NQB, RFC 9956): shallow, not priority, and policed",
+         "DualPI2 (the Linux L4S queue) as an extra comparison",
+         "Guessing video-call frame rate from packet sizes in real homes (IMC 2023 method)",
+         "QoO scores inside live receipts", "An optional chat box that only fills in the lease form"])
+h2("New scenarios")
+table([["#", "Situation", "Target"],
+       ["S10", "Wi-Fi is the problem", "Diagnosed as Wi-Fi; internet shaper untouched"],
+       ["S11", "A download falsely labels itself as smooth", "Label ignored within 1 s"],
+       ["S12", "1 hour of shadow mode beside cake-autorate", "Report of disagreements, judged in the lab"],
+       ["S13", "Unclear evidence", "Small ≤10% cut, kept only if delay improves"]], [1.2, 6.6, 8.6])
+box("New answers for judges", ["<b>“Why classify if apps should mark?”</b> We trust marks first; most apps "
+                               "don't mark yet, so we classify only unmarked flows and say 'not sure' when unsure.",
+                               "<b>“Why is your accuracy lower than papers?”</b> Because we removed the shortcuts "
+                               "that inflate them. Our number is lower but real."], "tip")
 
 # ---------------------------------------------------------------- appendix
 h1("Appendix: the other cases, and what the external review changed")

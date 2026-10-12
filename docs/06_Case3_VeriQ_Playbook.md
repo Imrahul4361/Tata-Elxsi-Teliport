@@ -125,6 +125,11 @@ Run **everything offline** with a local Jitsi Meet server: venue Wi-Fi must neve
 11. **"Other teams also built CAKE-based controllers. How are you different?"** We report what users feel (WebRTC freezes, DASH stalls), not just ping. We diagnose the cause before acting, give real guaranteed rates for intents, abstain on uncertain flows, and compare ourselves against the real tuned SQM-CAKE and cake-autorate with confidence intervals. See `docs/07`.
 12. **"How do you know capacity on an idle link?"** A short SLoPS-style packet-train probe (Jain & Dovrolis) to an operator-hosted reflector, at low duty cycle and never during an active call unless capacity is unknown. With no reflector, VeriQ falls back to passive tracking and labels the estimate.
 
+13. **"Operators say apps should mark traffic, not networks guess. Why classify?"** VeriQ trusts NQB (DSCP 45) and L4S (ECT(1)) marks first, as long as the flow behaves. Most apps don't mark yet, so VeriQ classifies only unmarked flows, inside the user's own home, and says "not sure" when unsure.
+14. **"ML papers report 98%. Why is your accuracy lower?"** SIGCOMM 2025 showed many such results come from leaky splits and shortcut features. We split by flow and by time, hold out whole apps, and remove IP/port/TTL/sequence features. Our number is lower but real.
+15. **"What if the diagnosis is uncertain but the call is suffering?"** One bounded cut of ≤ 10%, kept only if delay improves and logged as UNCERTAIN. Repeated uncertainty raises an alert instead of cutting again.
+16. **"Did you run it safely?"** New installs start in shadow mode with one log row per decision. Beside cake-autorate we report disagreements, and judge them only in the lab where the true fault is known.
+
 ## 10. Credibility rules for every slide
 - Every visual is tagged **measured**, **estimated** or **illustrative**. The ISP queue tank is always "inferred".
 - Targets go on design slides. Results slides show only measured numbers with n, CIs and the environment fingerprint.

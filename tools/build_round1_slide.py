@@ -229,7 +229,7 @@ def build_case3(slide):
         "Capacity moves (DOCSIS, 5G FWA, Wi-Fi): a static shaper is bloated or wasteful",
     ])
     card(slide, 4.58, y, 4.15, h, "Our idea", [
-        [("“VeriQ adapts, measures, and explains.”", 11.5, True, NAVY)],
+        [("“VeriQ finds the cause, protects what you chose, and proves it.”", 11, True, NAVY)],
         [("Localise the fault first", 10.5, True, INK),
          (" (own queue, WAN drop, remote path, Wi-Fi, bad probe), then act with bounded fast guardrails. Every adaptation gets an ", 10.5, False, INK),
          ("experience receipt: improved / degraded / inconclusive", 10.5, True, INK),
@@ -239,13 +239,13 @@ def build_case3(slide):
         "Never inspects forwarded payload; headers + timing; IPv4 + IPv6",
         [("• ", 10.5, True, BLUE), ("Intents = expiring leases with real HTB guaranteed rates from a budget; progress measured", 10.5, True, INK)],
         "Abstains when unsure: never promotes an uncertain flow",
-        "Versioned, read-back config; watchdog → conservative SAFE shaper",
+        "Shadow mode first; every decision logged; watchdog → SAFE shaper",
     ])
 
     # row B: closed loop
     flow_strip(slide, 2.78, 1.62, "Three speeds: fast guardrails (sub-second) · outcome receipts (tens of seconds) · controlled experiments (lab, for claims)", [
-        (1.86, "Observe", "Header + timing features of first packets per flow; v4/v6; no payload"),
-        (2.12, "Understand", "Early calibrated classifier (abstains) + capacity μ ± σ (delay tracking + active packet-train probes) + fault localiser"),
+        (1.86, "Observe", "Header + timing of first packets per flow, app marks (NQB / L4S); v4/v6; no payload"),
+        (2.12, "Understand", "Marks first, then a calibrated classifier (abstains) · capacity μ ± σ + UDPST idle test (RFC 9946) · fault localiser"),
         (2.04, "Decide", "Bounded guardrails: shaper = μ − kσ, change-point fast path · leases within budget"),
         (1.86, "Enforce", "CAKE (default) or HTB guaranteed mode; ordered, versioned, read-back apply"),
         (2.04, "Assess", "Receipts on WebRTC freezes, DASH rebuffers, delay, progress; estimated MOS labelled"),
@@ -260,13 +260,13 @@ def build_case3(slide):
         [("2  Real-app evidence: ", 10.5, True, NAVY),
          ("real encrypted WebRTC calls and DASH players in headless Chromium; we count video freezes and rebuffers, not just pings", 10.5, False, INK)],
         [("3  Payload-free, calibrated classification: ", 10.5, True, NAVY),
-         ("conformal sets; we report coverage, selective accuracy and abstention separately, including under traffic shift", 10.5, False, INK)],
+         ("marks first; split by flow and by time, no shortcut features (SIGCOMM 2025 lesson); abstains when unsure", 10.5, False, INK)],
         [("4  Honest receipts + replay: ", 10.5, True, NAVY),
-         ("improved / degraded / inconclusive, regime-aware; 3D replay shows inferred vs true ISP queue side by side", 10.5, False, INK)],
+         ("improved / degraded / inconclusive, plus IETF Quality-of-Outcome scores; 3D replay shows inferred vs true ISP queue", 10.5, False, INK)],
     ])
     card(slide, 6.98, yc, 6.05, hc, "How we will prove it", [
-        "Real, tuned baselines: FIFO · fq_codel · SQM-CAKE · cake-autorate v3.2 · VeriQ + ablations; ≥10 randomised runs, 95% CIs",
-        "9 scenarios: ISO during call, 100 → 20 Mbps drop, 3 TVs + gaming, remote-path delay, lying probe, crash, IPv6…",
+        "Real, tuned baselines: FIFO · fq_codel · SQM-CAKE · cake-autorate · qosify-style rules + ablations; ≥10 randomised runs, 95% CIs",
+        "13 scenarios: ISO during call, 100 → 20 Mbps drop, 3 TVs + gaming, remote delay, Wi-Fi, false marks, crash, IPv6…",
         "Physical Pi 5 kit: the judge picks the fault, VeriQ responds from telemetry alone",
         [("Targets: ", 10.5, True, GREEN),
          ("0 call freezes in S1 · added delay p95 ≤ 10 ms · settle < 2 s after WAN drop · measured progress for every class", 10.5, True, INK)],
