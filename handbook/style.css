@@ -93,11 +93,11 @@ figcaption::before { content: "Figure " counter(fig) ". "; font-weight: 700; col
 .toc-h2 a { color: #343A40; }
 
 /* part dividers */
-div.part { break-before: page; page-break-before: always; break-after: page; page-break-after: always;
+section.part { break-before: page; page-break-before: always; break-after: page; page-break-after: always;
   height: 240mm; display: flex; flex-direction: column; justify-content: center; }
-div.part h1 { font-size: 34pt; border: none; border-left: 10pt solid var(--navy); padding: 4pt 0 4pt 14pt;
+section.part > h1 { font-size: 34pt; border: none; border-left: 10pt solid var(--navy); padding: 4pt 0 4pt 14pt;
   break-before: auto; page-break-before: auto; }
-div.part .partsub { display: block; font-size: 14pt; color: var(--muted); padding-left: 24pt; }
+section.part .partsub { display: block; font-size: 14pt; color: var(--muted); padding-left: 24pt; }
 
 /* misc */
 hr { border: none; border-top: 1px solid var(--line); margin: 10pt 0; }

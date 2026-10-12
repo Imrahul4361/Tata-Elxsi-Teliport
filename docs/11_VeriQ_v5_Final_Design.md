@@ -326,7 +326,7 @@ A catalogue is a signed JSON file shipped in package `veriq-catalog`, with user 
 | ID | Heuristic | Action | Default (cake) | Default (hfsc/htb) | Origin |
 |---|---|---|---|---|---|
 | H1 | **Sustained bulk TCP**: `ct bytes > 10 s × S_down_base` (as QoSmate's `first10s`) or (duration > 30 s and average rate > 30% of S) | CLASS = BK, PROV = 2 | on | on | adapted from QoSmate |
-| H2 | **New-flow reset**: flows below the 500 ms byte threshold that carry a preferential DSCP (EF, CS5, VA 44, AF41–43, CS4, NQB 45) from a source outside `@trusted_dscp` (only active when `trust = list`) | CLASS = 0 (DSCP decides) | on | on | adapted from QoSmate `mark_500ms` |
+| H2 | **New-flow reset**: flows below the 500 ms byte threshold that carry a preferential DSCP (EF, CS5, VA 44, AF41–43, CS4, NQB 45) from a source outside `@trusted_dscp` (only active when `trust = list`; step 0 already washes untrusted DSCP, so H2 is deliberately redundant defence in depth and may be dropped if it never fires in tests) | CLASS = 0 (DSCP decides) | on | on | adapted from QoSmate `mark_500ms` |
 | H3 | **Slow-TCP upgrade** (< 150 pps → priority) | — | **off**: CAKE's sparse-flow optimisation already boosts low-rate flows, and upgrading gives priority without a basis (violates P5) | on, but as **"fast BE" sub-class**, never RT/IV | QoSmate, modified |
 | H4 | **High-rate UDP in a preferential class** (> 450 pps by default) | Handled by the envelope (§5.7) | on | on | QoSmate `udp_meter`, generalised |
 | H5 | **Bulk ports** (`bulk_tcp_ports`, `bulk_udp_ports`) | CLASS = BK | user | user | QoSmate `TCPBULKPORT`/`UDPBULKPORT` |
@@ -373,6 +373,8 @@ A catalogue is a signed JSON file shipped in package `veriq-catalog`, with user 
 - the first violation sets a 60 s timeout, kernel-refreshed on each repeat;
 - on repeated offences within 1 h, veriqd escalates the timeout (×2 per offence, cap 15 min) and resets the count after 1 h clean (as in v4.1);
 - the device and its other flows are unaffected.
+
+**Known gap:** a sanctioned flow is not metered while sanctioned, so a persistent offender regains up to one burst of preference after each penalty expires. Escalation (×2) bounds the cost; tests S11/A11 measure it.
 
 Envelopes use **S_base**, not the moving S, so the kernel rules do not churn. They are re-rendered when S_base changes, for example after the wizard runs.
 
@@ -1025,7 +1027,7 @@ type Enforcer interface {
 
 ```json
 {"t_mono_ms":123456789,"t_wall":"2026-11-20T20:41:07.250+05:30","tick":493827,
- "dir":"down","state":"LIVE","snapshot":{"S":95000,"Ghat":20100,"load":0.99,"D":42.1,"QOwn":0.8,
+ "dir":"down","state":"LIVE","snapshot":{"S":94000,"Ghat":20100,"load":0.99,"D":42.1,"QOwn":0.8,
  "near":{"ok":true,"d":39.0},"healthy":5,"owd":true},
  "diag":{"label":"WAN_LIKELY","level":2,"sources":["FAR","THR"]},
  "action":{"id":"01JC…","type":"RATE_CUT","target":18090},
@@ -1241,7 +1243,7 @@ With 3 people, R4 is shared.
 |---|---|---|
 | O1 | Hybrid backend (HFSC + CAKE)? | Not offered; revisit only if H3 shows hfsc or cake alone failing a gaming scenario |
 | O2 | fwmark value → CAKE tin mapping on each kernel | Use 1–4 = Bulk, BE, Video, Voice; the self-test is authoritative; the mapping table is configurable if a kernel differs |
-| O3 | `act_ctinfo cpmark` unavailable or broken on a target | Fallback mode: QoSmate-style DSCP restore (`ctinfo dscp 63 128`), with DSCP as the class carrier, washed after the CAKE tin decision; health shows "compat mode" |
+| O3 | `act_ctinfo cpmark` unavailable or broken on a target | Fallback mode: QoSmate-style DSCP restore (`ctinfo dscp 63 128`), with DSCP as the class carrier, washed after the CAKE tin decision; health shows "compat mode". Compat mode uses ct mark bits 0–7 (DSCP | 128), so the conflict scan must also cover bits 0–7 in that mode |
 | O4 | Fewer than 2 timestamp-capable reflectors qualify | RTT-only mode with load attribution (§6.4) |
 | O5 | VeriQ licence | Apache-2.0 proposed; Tata Elxsi decides |
 | O6 | UDPST server | None by default (L3 unavailable); the lab provides one |

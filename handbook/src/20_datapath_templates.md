@@ -13,7 +13,7 @@ Everything here is a **template that veriqd renders** from `/etc/config/veriq` (
 - **Wrapped lines.** An nft rule ending in ` \` is wrapped for print only; the renderer emits one line. tc batch files accept the backslash natively.
 - **Directions.** Upload (egress) is shaped on the WAN device; download (ingress) on the IFB (Intermediate Functional Block) device `ifb-veriq`. The WAN device is `eth1` in the examples (illustrative; resolved from netifd at run time).
 
-**Owned objects.** VeriQ owns exactly: table `inet veriq` (and the user's `inet veriq_custom`), the root qdisc on WAN, the ingress qdisc and matchall filter on WAN, `ifb-veriq` and its root qdisc, and `/var/run/veriq/safe.env` (plus `safe.tc` for HFSC/HTB). The templates use root handle `1:` as in the docs/11 §4.1 class table; ownership is decided by comparing observed objects with the persisted desired document (docs/09 A.5). A distinctive major (for example `7e1:`) is one renderer constant if the team prefers it.
+**Owned objects:** tables `inet veriq` and `inet veriq_custom`, the WAN root and ingress qdiscs with the matchall filter, `ifb-veriq` with its root qdisc, and `safe.env`/`safe.tc`. Root handle `1:` follows the docs/11 §4.1 class table; ownership is decided by comparing observed objects with the persisted desired document (docs/09 A.5).
 
 ## The conntrack mark layout
 
@@ -34,10 +34,7 @@ CLASS uses the four service classes RT (realtime), IV (interactive video), BE (b
 
 ### Bit arithmetic, worked
 
-**Example 1: a lease on a connection that mwan3 has already marked.** The stored mark is `0x00003F00` (mwan3's bits only).
-- Clear VeriQ's bits: `0x00003F00 & 0x80FFFFFF = 0x00003F00`.
-- Set the lease RT value: `0x00003F00 | 0x34000000 = 0x34003F00`.
-- Decode: CLASS = `(0x34003F00 >> 24) & 7 = 0x34 & 7 = 4` (RT). PROV = `(0x34003F00 >> 27) & 7 = 0b110 = 6` (lease). SANCT = `(m >> 30) & 1 = 0`. mwan3's `0x3F00` is untouched.
+**Example 1: a lease on a connection mwan3 has marked.** `0x00003F00 & 0x80FFFFFF | 0x34000000 = 0x34003F00`. Decode: CLASS = `0x34 & 7 = 4` (RT), PROV = `(0x34 >> 3) & 7 = 6` (lease), SANCT = 0; mwan3's `0x3F00` is untouched.
 
 **Example 2: a user-rule RT flow violates its envelope, then recovers.** The stored mark is `0x2C003F00`. Keep PROV, clear CLASS and SANCT: `& 0xB8FFFFFF = 0x28003F00`; OR the sanction: `| 0x42000000 = 0x6A003F00`. Decode `0x6A = 0110 1010₂`: bit 30 set, CLASS = `0x6A & 7 = 2` (BE), PROV = `(0x6A >> 3) & 7 = 5`, so the explain API can say which basis was sanctioned. When the penalty expires the kernel clears all three fields (`& 0x80FFFFFF = 0x00003F00`) and the flow is re-classified from scratch.
 
@@ -72,20 +69,9 @@ The forward hook sees LAN addresses in both directions (source NAT happens later
 
 ### Sets and meters
 
-| Set | Type, flags | Filled by | Kind | Purpose |
-|---|---|---|---|---|
-| `wan_ifs` | `ifname` | veriqd on ifup | runtime | WAN devices; a renamed PPPoE device is an element change, not a reload |
-| `state_bypass` | `meta nfproto` | veriqd | runtime | Level 1 bypass while disabling |
-| `trusted_dscp4/6` | address, interval | config | static | Trusted DSCP sources (step 0 and H2, only when `trust = list`) |
-| `lease_rt4/6`, `lease_iv4/6` | address, timeout | veriqd after ACCEPT | runtime | Device leases; timeout = remaining time |
-| `sanctioned` | `ct id`, dynamic, timeout | kernel; veriqd escalates | runtime | Flows under penalty |
-| `dev_<name>_4/6` | address | veriqd (DHCP + neighbours) | runtime | A device's IPv4 and all IPv6 addresses |
-| `app_<id>_4/6`, user ipsets | address, timeout | dnsmasq-full `nftset` or config | runtime/static | App and user destinations |
-| `bulk_tcp_ports`, `bulk_udp_ports` | `inet_service`, interval | config | static | H5 |
-| `rt_up_b/_p`, `iv_up_b`, `rt_dn_b/_p`, `iv_dn_b` | `ct id`, dynamic, timeout | kernel | meter | Envelope (bytes `_b`, packets `_p`) |
-| `pol_<name>_up4/dn4`, `slowtcp` | address or `ct id`, dynamic | kernel | meter | Policers; H3 |
+**Sets.** Config-derived (**static**, rebuilt on every apply): `trusted_dscp4/6`, `bulk_tcp_ports`, `bulk_udp_ports` and static user IP sets. Live (**runtime**, must survive a reload): `wan_ifs` (veriqd on ifup, so a renamed PPPoE device is an element change, not a reload), `state_bypass`, `lease_rt4/6` and `lease_iv4/6` (veriqd after the checker accepts; timeout = remaining lease time), `sanctioned`, `dev_<name>_4/6` (veriqd, from DHCP leases and the neighbour table, all IPv6 addresses included), `app_<id>_4/6` and dynamic user sets (dnsmasq-full `nftset`). Kernel **meters** (dynamic sets with a `limit`): `rt_up_b/_p`, `iv_up_b`, `rt_dn_b/_p`, `iv_dn_b` for the envelope, `pol_<name>_*` for policers and `slowtcp` for H3.
 
-Envelope meters are keyed `ct id . ct direction` (docs/11 §5.2) and kept in one set per direction, because the thresholds differ. **Static** sets are rebuilt from config on every apply; **runtime** sets hold live state and must survive a reload.
+Envelope meters are keyed `ct id . ct direction` (docs/11 §5.2), one set per direction because the thresholds differ.
 
 ## The annotated nftables template
 
@@ -190,7 +176,6 @@ Points to note:
         meta nfproto ipv6 ct packets < 33 limit name "sample_lim" \
             log group 7 snaplen 60 queue-threshold 32
 {{end}}
-        # Download packets were classified by act_ctinfo before shaping: meter only
         # Download packets are handled by base chain cls_down
         iifname @wan_ifs return
 
@@ -305,11 +290,11 @@ Every class-writing rule is guarded so it fires only when the stored PROV is low
 | RT | max(1 Mbit/s, 2% of S_base,dir) | 450 pps | 0.25 s worth of the threshold |
 | IV | max(8 Mbit/s, 25% of S_base,dir) | — | 0.25 s worth of the threshold |
 
-The burst is **not** in docs/11: it is a rendering assumption, tuned with the thresholds in S11/A11 (O9). A token bucket with rate R and burst B lets a flow at X > R run for B / (X − R) seconds before it trips. With B = 0.25·R a flow at twice the threshold is caught after 0.25 s and one 20% over after 1.25 s, against A11's target of "sanctioned within 1 s"; a video key-frame burst stays inside the IV burst.
+The burst is a **rendering assumption** (not in docs/11), tuned in S11/A11 (O9). A bucket with rate R and burst B lets a flow at X > R run B / (X − R) seconds: with B = 0.25·R, a flow at 2R trips after 0.25 s and one at 1.2R after 1.25 s (A11 target: within 1 s), while a video key-frame burst fits.
 
 **Sanction mechanics.** The first violation sets CLASS = BE and SANCT = 1 for the flow (both directions), adds it to `@sanctioned` for 60 s and sends one NFLOG message (group 8) to veriqd, which counts offences per flow over the last hour. On a repeat (the flow recovers, regains its class, trips again) the kernel re-adds a fresh 60 s element and veriqd proposes `SANCTION_ESCALATE`; if accepted, it replaces the element with a doubled timeout (cap 15 min) by delete + add in one `nft -f` transaction **[verify]**. The device's other flows are unaffected.
 
-> **Honesty check.** A sanctioned flow is not metered during its penalty, so a persistent offender regains its class for up to one burst (0.25 s at the starting value) after each penalty, then trips again with a doubled penalty. The leak is bounded and logged. Metering during the penalty would need the original class stored per flow: a design change for docs/12, not an improvisation in code.
+> **Honesty check.** A sanctioned flow is not metered during its penalty, so a persistent offender regains its class for up to one burst after each penalty, then trips again with a doubled penalty: a bounded, logged leak. Closing it needs the original class stored per flow, a design change for docs/12.
 
 The standing-queue rule (preferential tin queue ≥ 3 s) is not expressible in nft: veriqd detects it from CAKE per-tin delays, picks the top contributing flow from conntrack counters, and writes the same sanction state over netlink.
 
@@ -332,13 +317,7 @@ All heuristic rules are guarded by `PROV <= 2`, so they never touch a lease, use
             ip dscp $DSCP_PREF ct mark set ct mark & $KEEP | $V_HEUR_RST
         ct mark & $PROV $P_LE2 ct bytes < {{.H2Bytes}} ip6 saddr != @trusted_dscp6 \
             ip6 dscp $DSCP_PREF ct mark set ct mark & $KEEP | $V_HEUR_RST
-{{end}}{{if .H3}}
-        # H3 (HFSC/HTB only, P1): TCP below 150 pps -> fast-BE; above -> plain BE
-        ct mark & $PROV $P_LE2 meta l4proto tcp update @slowtcp { ct id \
-            limit rate over 150/second } ct mark set ct mark & $KEEP | $V_HEUR_BE
-        ct mark & $PROV $P_LE2 meta l4proto tcp ct mark & $CLASS == 0x0 \
-            ct mark set ct mark & $KEEP | $V_HEUR_BEF
-{{end}}
+{{end}}        # H3 (HFSC/HTB only, P1): rendered here when enabled (table below)
 ```
 
 | ID | Template behaviour | Notes |
@@ -353,18 +332,7 @@ All heuristic rules are guarded by `PROV <= 2`, so they never touch a lease, use
 
 **Wash rules** (product profile, C6). The CAKE backend uses the `wash` keyword on both instances (CAKE picks the tin, then clears the DSCP). HFSC/HTB use nft: `cls_down` washes after IFB shaping and before the LAN; `mark_out` washes at the end of postrouting. The lab profile renders neither. With egress wash on, a QoSmate-style `set_dscp '1'` never leaves the router, so the UI warns that it matters only when `wash_egress = 0`.
 
-**Policers.** Each `ratelimit` target address gets its own meter element (per device, not shared):
-
-```nft
-    chain police {
-        ip saddr {{.Target4}} oifname @wan_ifs update @pol_{{.Name}}_up4 { ip saddr \
-            limit rate over {{.UpBps}} bytes/second burst {{.UpBurst}} bytes } counter drop
-        ip daddr {{.Target4}} iifname @wan_ifs update @pol_{{.Name}}_dn4 { ip daddr \
-            limit rate over {{.DnBps}} bytes/second burst {{.DnBurst}} bytes } counter drop
-    }
-```
-
-`burst = burst_factor × 1 s × rate` is a rendering assumption. Download drops happen after IFB shaping, so some shaped capacity is spent on packets then dropped: inherent to policing, hence the label "policer, not a shaper" (P7).
+**Policers.** Each `ratelimit` target address gets its own meter element in chain `police` (per device, not shared); the worked render shows the rules. `burst = burst_factor × 1 s × rate` is a rendering assumption. Download drops happen after IFB shaping, so some shaped capacity is spent on packets then dropped: inherent to policing, hence the label "policer, not a shaper" (P7).
 
 **MSS clamp.** docs/11 §4.5 clamps the SYN MSS (Maximum Segment Size) into 536–1500 when a direction's S < 3000 kbit/s but does not fix the value. **Proposed:** the largest MSS whose segment serialises in ≤ 5 ms at the lower S; at 2000 kbit/s, 1250 bytes on the wire, so MSS 1210. The rule matches SYNs in both directions.
 
@@ -455,7 +423,7 @@ filter add dev eth1 parent 1: protocol all prio 1 handle 0x04000000/0x07000000 f
 # ... likewise 0x03000000 -> 1:12, 0x02000000 -> 1:13, 0x05000000 -> 1:14, 0x01 -> 1:15
 ```
 
-- **RT budget** B = 15% of S + 400 kbit (docs/11 §4.3; QoSmate's GAMEUP default, read) = 7150 kbit/s. The rt curve (`m1 = 2·B` for 10 ms) and the link-share weights are **rendering assumptions** to tune in H3.
+- **RT budget** B = 15% of S + 400 kbit (docs/11 §4.3; QoSmate's GAMEUP default, read) = 7150 kbit/s. The rt curve (`m1 = 2·B` for 10 ms) and the link-share weights are **rendering assumptions** to tune in evaluation tier H3.
 - **AQM** (docs/11 §4.5): `target = max(5 ms, 1.5 × MTU serialisation at S)`, `interval = 100 ms + target`, quantum 300 below 100 Mbit/s; at 45 Mbit/s a 1514-byte frame takes 0.27 ms, so 5 ms.
 - **pfifo RT leaf** (`rt_leaf pfifo`): limit = `pfifo_min + ceil(maxdel × B / (8 × packet_size))` = 5 + ceil(24 ms × 7150 kbit/s / 3600 B) = 53 packets, what drains within `maxdel`.
 - CLASS 0 has no DSCP fallback: it lands in default `1:13`. Class 1:14 exists only with H3.
@@ -482,9 +450,9 @@ Rate shares, `burst = S × 1 ms` and the explicit quantum (the default `r2q` giv
 | HFSC | 1. `1:1 ls m2 S′ ul m2 S′`; 2. `1:11` rt curve with B′ = 0.15·S′ + 400; 3. ls leaves scaled; 4. fq_codel targets if they move ≥ 1 ms | rt m1 and m2 of `1:11` < ul of `1:1` (rt service ignores `ul`). If a deep cut makes the old B ≥ S′, step 2 goes first |
 | HTB | 1. `1:1 rate ceil S′`; 2. leaves `rate share·S′ ceil S′`; 3. fq_codel targets | Leaf ceil ≤ root ceil |
 
-If a step fails, the backend runs the compensating step (restore the previous value) or the state goes to SAFE; at most 3 retries with capped backoff (docs/11 §8.3).
+On a failed step the backend compensates (restores the previous value) or goes SAFE, with at most 3 retries (docs/11 §8.3).
 
-After every accepted rate change, `enforce` rewrites `/var/run/veriq/safe.env` (atomically: temp file and rename) with the SAFE rates, 0.85 × min(S_lkg, S_base) per direction. The watchdog's `safe-apply.sh` reads it without asking veriqd anything:
+After every accepted rate change `enforce` atomically rewrites `/var/run/veriq/safe.env` with the SAFE rates, 0.85 × min(S_lkg, S_base) per direction, which the watchdog's `safe-apply.sh` reads without asking veriqd:
 
 ```ini
 VERIQ_VERSION=812
@@ -496,7 +464,7 @@ VERIQ_SAFE_DOWN_KBIT=51000
 VERIQ_SAFE_BATCH=/var/run/veriq/safe.tc
 ```
 
-The values are illustrative (S_lkg 40 000/60 000 kbit/s up/down; S_base 45 000/90 000). For CAKE the watchdog runs one `tc qdisc change … bandwidth` per direction. For HFSC/HTB it runs the pre-rendered ordered batch `safe.tc` for the *same* backend: replacing the root qdisc from a shell loop would interrupt traffic. docs/11 §8.2 describes SAFE as "static CAKE"; keeping the active backend at SAFE rates is this chapter's interpretation, to confirm with the safety owner.
+Values illustrative (S_lkg 40 000/60 000, S_base 45 000/90 000 kbit/s). For CAKE the watchdog runs one `tc qdisc change … bandwidth` per direction; for HFSC/HTB it runs the pre-rendered `safe.tc` for the *same* backend, because replacing a root qdisc from a shell loop interrupts traffic. docs/11 §8.2 says SAFE is "static CAKE"; keeping the active backend is this chapter's interpretation, to confirm with the safety owner.
 
 **Teardown** (DISABLED, `veriqctl uninstall-cleanup`) is the install order reversed: delete the WAN ingress qdisc (which removes the redirect), the IFB root qdisc, `ip link del ifb-veriq`, the WAN root qdisc, then `nft delete table inet veriq` and `inet veriq_custom`. Only owned objects are touched. Stale VeriQ bits left in live conntrack entries are harmless; veriqd clears bits 24–30 over netlink when it has time to (**implementation tip**).
 
@@ -512,4 +480,119 @@ filter add dev {{.Wan}} parent ffff: protocol all prio 10 matchall \
 
 CAKE on the IFB then picks the tin from the restored DSCP and washes it afterwards. Health shows "compat mode".
 
-> **Honesty check.** `ctinfo dscp 63 128` keeps the DSCP in ct mark **bits 0–7**, which breaks the §4.2 promise that bits 0–23 are never touched. Compat mode must therefore extend the conflict scan to bits 0–7 and refuse to start if another package uses them. Moving the DSCP into bits 24–30 would destroy the CLASS/PROV encoding that kernel precedence depends on, so it is not an option. Record this as a caveat to O3.
+> **Honesty check.** `ctinfo dscp 63 128` stores the DSCP in ct mark **bits 0–7**, breaking the §4.2 promise that bits 0–23 are never touched. Compat mode must extend the conflict scan to bits 0–7 and refuse to start if they are in use; moving the DSCP into bits 24–30 would destroy the CLASS/PROV encoding. Record this as a caveat to O3.
+
+## Read-back: what veriqd parses
+
+`observe` and `reconcile` read the kernel back as JSON every tick and after every change. Field names are as the team expects iproute2 and nftables to print them (**[verify]**); parsers ignore unknown fields and fail soft (a signal becomes "missing", never zero).
+
+**`tc -s -j qdisc show dev <dev>`, CAKE.** The qdisc object carries `kind`, `handle`, `options` (`bandwidth`, `diffserv`, `fwmark`, `wash`, `overhead`, `mpu`, …), the counters `bytes`, `packets`, `drops`, `backlog`, `qlen`, and a `tins` array in display order. An illustrative excerpt (values invented for the shape, not measured):
+
+```json
+{"kind":"cake","handle":"1:","options":{"bandwidth":2261250,"diffserv":"diffserv4"},
+ "bytes":912345678,"packets":702114,"drops":214,"backlog":0,
+ "tins":[{"threshold_rate":141328,"sent_bytes":1203400,"sent_packets":1811,
+          "backlog_bytes":0,"target_us":5000,"interval_us":100000,
+          "peak_delay_us":3410,"avg_delay_us":620,"base_delay_us":12,"drops":3,
+          "ecn_mark":0,"ack_drops":0,"sparse_flows":0,"bulk_flows":1}]}
+```
+
+What the fields feed:
+- `options.bandwidth`: read-back of S (expected in bytes/s **[verify]**; 18 090 kbit/s = 2 261 250 B/s).
+- Per-tin `sent_bytes`/`sent_packets`: G_gw = Δbytes × 8 / Δt (plus Δpackets × overhead if the counters exclude it **[verify]**), the tin self-test and the Queues page.
+- Per-tin `avg_delay_us`, `peak_delay_us`, `backlog_bytes`: Q_own (BE, BK), the standing-queue sanction, lease receipts. `drops`, `ecn_mark`, `ack_drops`: Queues page and receipts.
+- Per-tin `threshold_rate`: for `diffserv4` CAKE sets Bulk, Best Effort, Video and Voice to 1/16, 1/1, 1/2 and 1/4 of the bandwidth **[verify]**, which confirms the tin order from the numbers.
+
+**HFSC/HTB.** `tc -s -j class show dev <dev>` gives per-class `bytes`, `packets`, `drops` and `backlog`; Q_own is approximated as backlog / S, and the fq_codel leaves (`tc -s -j qdisc show`) add drops and ECN marks.
+
+**Ingress filter.** `tc -j filter show dev <WAN> ingress` must show one `matchall` filter whose actions are `ctinfo` (with the `cpmark` mask, or the `dscp` masks in compat mode) and `mirred` redirecting to `ifb-veriq`. The JSON key names of the ctinfo action are a **[verify]** item; match on `kind` and search the action object for the mask.
+
+**nftables.** `nft -j list table inet veriq` returns `{"nftables":[…]}` with a `metainfo` object, the `table` (with its `comment`), `chain`, `set` (with `elem` entries carrying `timeout` and `expires`) and `rule` objects (with `comment` and an `expr` array containing `counter` values).
+
+**Ownership check** (every tick): the table comment equals `veriq:v<desired version>`; each owned chain has the expected hook, priority and rule count (user rules found by comment); sets have the expected definitions and lease elements match the lease table; qdiscs, bandwidth and the ingress filter match the desired document. A missing table is self-healed within one tick (A31). A mismatch caused by another tool sends VeriQ to DEGRADED without fighting (A30); one the reconciler can explain (an apply in progress, the watchdog's SAFE change) is not foreign.
+
+## Worked render: from UCI to kernel text
+
+Input: the docs/11 Appendix B defaults plus one device, one rule and one rate limit (addresses and WAN device illustrative).
+
+```ini
+# shaping: backend cake, down_base_kbit 90000, up_base_kbit 45000, dscp_policy product,
+#          trust all; wan: preset ethernet (Appendix B defaults)
+config device
+    option name 'PS5'
+    option mac '00:11:22:33:44:55'
+config rule
+    option name 'Console'
+    option device 'PS5'
+    option proto 'udp'
+    list dest_port '!=80'
+    list dest_port '!=443'
+    option vclass 'rt'
+    option counter '1'
+config ratelimit
+    option name 'Guests'
+    list target '192.168.2.0/24'
+    option download_limit '5000'
+    option upload_limit '2000'
+    option burst_factor '1.0'
+```
+
+Values veriqd computes (starting parameters or rendering assumptions as labelled earlier). The ratio 90 000 / 45 000 = 2 < 15 gives `no-ack-filter`, and both rates are ≥ 3000 kbit/s, so there is no MSS clamp.
+
+| Quantity | Upload | Download |
+|---|---|---|
+| RT envelope rate | max(1000, 900) = 1000 kbit/s = 125 000 B/s, burst 31 250 B | max(1000, 1800) = 1800 kbit/s = 225 000 B/s, burst 56 250 B |
+| RT envelope packets | 450/s, burst 113 | 450/s, burst 113 |
+| IV envelope rate | max(8000, 11 250) = 11 250 kbit/s = 1 406 250 B/s, burst 351 562 B | max(8000, 22 500) = 22 500 kbit/s = 2 812 500 B/s, burst 703 125 B |
+| H1 / H2 byte thresholds | 10 s × 90 000 kbit/s = 112 500 000 B; H2 not rendered (trust = all) | — |
+| Guests policer | 2000 kbit/s = 250 000 B/s per address | 5000 kbit/s = 625 000 B/s per address |
+
+The configuration-dependent lines of the rendered nft file (everything else is the fixed template above, with H3 and the nft wash rules absent because the backend is CAKE):
+
+```nft
+    set dev_ps5_4 { type ipv4_addr; elements = { 192.168.1.50 } }
+    set dev_ps5_6 { type ipv6_addr; elements = { 2001:db8:1::50, fe80::211:22ff:fe33:4455 } }
+    # cls_up, level 4 (compiled user rule "Console"):
+        ip saddr @dev_ps5_4 udp dport != { 80, 443 } counter \
+            ct mark set ct mark & $KEEP | $V_USER_RT comment "veriq:rule:Console" \
+            goto envelope
+        # ... and the same rule with ip6 saddr @dev_ps5_6
+    # envelope/envelope_dn: the numbers from the table above fill the Part 3 rules
+    # police:
+        ip saddr 192.168.2.0/24 oifname @wan_ifs update @pol_guests_up4 { ip saddr \
+            limit rate over 250000 bytes/second burst 250000 bytes } counter drop
+        ip daddr 192.168.2.0/24 iifname @wan_ifs update @pol_guests_dn4 { ip daddr \
+            limit rate over 625000 bytes/second burst 625000 bytes } counter drop
+    # H1: ct bytes > 112500000
+```
+
+veriqd fills `dev_ps5_4/6` from the DHCP lease and the neighbour table and keeps them current; the IPv6 privacy addresses join the set as they appear. The rendered tc batch (start rate = S_base on first install):
+
+```bash
+qdisc replace dev eth1 root handle 1: cake bandwidth 45000kbit diffserv4 dual-srchost nat \
+    fwmark 0x07000000 wash no-ack-filter ethernet
+qdisc replace dev ifb-veriq root handle 1: cake bandwidth 90000kbit diffserv4 \
+    dual-dsthost nat ingress fwmark 0x07000000 wash ethernet
+qdisc replace dev eth1 handle ffff: ingress
+filter add dev eth1 parent ffff: protocol all prio 10 matchall \
+    action ctinfo cpmark 0x7f000000 action mirred egress redirect dev ifb-veriq
+```
+
+A later L2 cut of the download direction to 18 090 kbit/s is the single line `qdisc change dev ifb-veriq root cake bandwidth 18090kbit`, followed by read-back and a new `safe.env`.
+
+## Stage-1 verification checklist
+
+Each item is checked in the netns lab and the OpenWrt VM before Stage 2 runs count:
+
+1. `flush table` keeps sets and elements (reload with a live lease and sanction).
+2. Masked anonymous-set lookups and the `meta nfproto` set key (`nft -c`, then packets).
+3. `ct id . ct direction` meters trip at the rendered rates (constant-rate UDP either side).
+4. The named limit is shared by both NFLOG rules; IPv4/IPv6 copy ranges as specified.
+5. Sanction timeout replacement (escalate twice, read `expires`); table `comment` support.
+6. `ctinfo cpmark 0x7f000000` syntax, and that it replaces the skb mark (tc-ctinfo(8) [R7]).
+7. fwmark 1–4 → Bulk, BE, Video, Voice in both directions (O2), with the `threshold_rate` cross-check.
+8. C15: an EF-marked download probe and a CS6-marked LAN probe land in BE after the first packet.
+9. CAKE JSON names, units and counter overhead (against a known iperf3 rate).
+10. HFSC rt never exceeds `ul` during a deep cut with RT traffic; compat-mode syntax and the bits 0–7 scan.
+
+When every item passes on a target, that target's renderer configuration is frozen for the evaluation runs and recorded in the run manifest.
