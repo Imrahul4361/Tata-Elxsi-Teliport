@@ -461,7 +461,7 @@ bullets([
     "<b>OpenWrt SQM</b>: the popular router setup that applies CAKE at a fixed speed. Another baseline.",
 ])
 box("Key insight for interviews", "CAKE already solves a lot. Judges will ask: <b>“What did you add on top of "
-    "CAKE?”</b> Our answers: fault diagnosis before acting, guaranteed-rate intents, payload-free "
+    "CAKE?”</b> Our answers: fault diagnosis before acting, budgeted user intents, payload-free "
     "classification, evidence receipts, and an honest comparison with the real cake-autorate.", "tip")
 
 # ---------------------------------------------------------------- 7
@@ -537,7 +537,7 @@ table([
     ["Fixed speed limit", "Tracks the real speed with a confidence range, and finds the <b>cause</b> first"],
     ["'AI decides priority' with no proof", "Every decision has a receipt; claims come from repeated experiments"],
     ["Ping graphs as proof", "Counts real video-call freezes and video stalls"],
-    ["Strict priority (starves others)", "Guaranteed minimums with a budget; progress is measured for everyone"],
+    ["Strict priority (starves others)", "Bounded preference with a budget; progress is measured for everyone"],
     ["Static dashboard", "3D home model + replay that separates measured, estimated and illustrative"],
 ], [7.0, 9.4])
 
@@ -570,11 +570,13 @@ modules = [
      "(written μ − kσ: μ = best guess, σ = uncertainty). It cuts quickly on drops and increases slowly.",
      "Estimate 20 ± 1 Mbps → shaper ≈ 18.5 Mbps."),
     ("M5 · Enforcer: 'the hands'",
-     "Applies settings to Linux. Two modes: <b>CAKE</b> by default (short fair queues, soft priority) and "
-     "<b>HTB guaranteed mode</b> when someone has an active intent (real minimum speeds).",
+     "Applies settings to Linux using <b>CAKE</b> (short fair queues, soft priority). A user intent moves that "
+     "device's traffic into a higher CAKE class; CAKE itself caps how much extra it can get. (Hard guaranteed "
+     "speeds with HTB are a later experiment.)",
      "Changes are made step by step in a safe order, saved with a version number, read back to confirm, and "
      "repaired if they don't match. A watchdog switches to a conservative SAFE setting if VeriQ crashes.",
-     "User protects the laptop → HTB gives the laptop class a guaranteed 4 Mbps."),
+     "User protects the laptop → the laptop's traffic goes into CAKE's 'Video' class and gets preference, "
+     "but only up to about half the speed."),
     ("M6 · Outcome Assessor: 'the judge'",
      "Writes the experience receipt after each change: improved / degraded / inconclusive, with the reason.",
      "Compares real metrics (call freezes, video stalls, delay, progress of every class) in comparable time "
@@ -584,9 +586,10 @@ modules = [
     ("M7 · Intent Leases: 'the user's wishes'",
      "Lets a user say 'protect my work call for 45 minutes'. This becomes a <b>lease</b>: it is authenticated, "
      "it always expires, and it is paid from a <b>budget</b> so others keep enough.",
-     "Admission control: if the request would push total guaranteed speed above the budget, it is partly "
-     "granted or refused, with a clear reason.",
-     "Two people ask for priority at the same time → both get part of the budget, and the downloads still move."),
+     "Admission control: at most 2 active leases per home, one per device, limited duration. CAKE caps the "
+     "extra share. Receipts check that the leased device really improved.",
+     "A third person asks for priority while 2 leases are active → refused with a clear reason; downloads keep "
+     "moving."),
     ("M8 · Dashboards + 3D twin: 'the window'",
      "Grafana charts for engineers, plus a 3D model of the house for everyone else.",
      "Every element is marked <b>measured</b> (solid), <b>estimated</b> (outlined with a confidence band) or "
@@ -666,13 +669,20 @@ bullets(["<b>Main data</b>: traffic you generate yourself in the lab, so you kno
 
 # ---------------------------------------------------------------- 12
 h1("12. Fairness, guarantees and honest statistics")
-h2("Soft priority vs real guarantees")
-p("CAKE's four 'tins' give <b>preference</b>: important traffic goes first, but only up to a share. That is "
-  "not a guaranteed minimum. When a user has an active intent, VeriQ switches to <b>HTB</b>, where each class "
-  "gets a real guaranteed rate and can borrow unused speed up to a maximum.")
-h2("The promotion budget")
-p("Total guaranteed speed for all intents can never exceed, say, 60% of the shaper speed. The rest stays "
-  "available for everyone else. A request that does not fit is partly granted or refused, with a reason.")
+h2("Soft priority now, real guarantees later")
+p("CAKE's four 'tins' give <b>preference</b>: important traffic goes first, but only up to a share (about half "
+  "for 'Video', a quarter for 'Voice'). Above that share it loses its advantage, so nobody can starve the rest. "
+  "That is <b>not</b> a guaranteed minimum. In the core, a user intent uses this bounded preference. Real "
+  "guaranteed rates with <b>HTB</b> (a tree where each class gets a promised rate) are a <b>post-core "
+  "experiment</b>, because switching schedulers is the riskiest operation in the design.")
+h2("The promotion budget (core)")
+p("At most 2 active leases per home, one per device, each for a limited time. CAKE's thresholds cap the extra "
+  "share. A request that does not fit is refused, with a reason.")
+h2("Who wins when rules clash")
+p("<b>Sanction &gt; lease &gt; user correction &gt; app label &gt; classifier.</b> A flow caught misbehaving (e.g. "
+  "a download pretending to be 'smooth' traffic) is <b>sanctioned</b>: kept at normal priority. Nothing can "
+  "promote it, not even a lease on its device or a user correction, until it has behaved for a penalty period "
+  "(60 s by default, doubling each time it repeats).")
 h2("Starvation is measured, not assumed")
 p("A setting that says 'minimum 1 Mbps' does not prove a download keeps moving. VeriQ measures each class's "
   "actual <b>progress</b> (bytes delivered per time window) and reports it.")
@@ -719,7 +729,7 @@ table([
      "down"],
     ["S3", "3 TVs + a game", "Game extra delay p99 ≤ 20 ms; no video stalls; fairness ≥ 0.9"],
     ["S4", "Cloud backup upload during a call", "Same as S1, for upload"],
-    ["S5", "'Protect laptop 45 min'", "Guarantee honoured; others keep moving; lease ends on time"],
+    ["S5", "'Protect laptop 45 min'", "Laptop's delay and freezes improve; others keep moving; lease ends on time"],
     ["S6", "A far-away server is slow", "Diagnosed as remote; shaper is <b>not</b> cut"],
     ["S7", "A probe server gives wrong readings", "Ignored; no action"],
     ["S8", "VeriQ crashes", "SAFE setting engages; time-to-safe measured"],
@@ -769,7 +779,7 @@ h2("MVP spine: must work end-to-end by 13 December")
 numbered(["Lab + scenario runner + real baselines (SQM-CAKE, cake-autorate v3.2)",
           "Observer (Python capture) + small calibrated classifier that can abstain",
           "Capacity estimator + fault localiser (WAN / remote / own queue / bad probe)",
-          "Enforcer: CAKE default + HTB guaranteed mode + leases with a budget",
+          "Enforcer: CAKE + leases with bounded preference + sanctions",
           "Receipts: improved / degraded / inconclusive",
           "Real WebRTC call + DASH video in a headless browser",
           "Grafana dashboards + recorded replay",
@@ -786,7 +796,7 @@ table([
     ["≤ 24 Oct", "Submit Round 1"],
     ["25 Oct – 13 Nov", "Build early: lab runner, observer, enforcer + watchdog, estimator v1"],
     ["14–20 Nov", "Classifier + abstention; fault localiser scoring"],
-    ["21–27 Nov", "Policy engine, receipts, leases + HTB"],
+    ["21–27 Nov", "Policy engine, receipts, leases + sanctions"],
     ["28 Nov – 4 Dec", "WebRTC/DASH harness, Grafana, 3D twin v1, physical kit"],
     ["5–13 Dec", "Full evaluation, report, video, 10-slide deck, rehearsal"],
 ], [3.6, 12.8])
@@ -840,7 +850,7 @@ p("File: <b>submission/Round1_Case3_VeriQ.pptx</b> (slide 2 is the entry). Befor
 h2("How to explain each part of the slide")
 bullets(["<b>The real problem</b>: queues, not bandwidth; port rules fail on encrypted traffic; speed changes.",
          "<b>Our idea</b>: find the cause first, act with safe fast rules, write a receipt for every change.",
-         "<b>Bounded by design</b>: no content reading; intents are expiring leases with real guarantees; "
+         "<b>Bounded by design</b>: no content reading; intents are expiring, budgeted leases; "
          "never promotes an uncertain flow; SAFE fallback.",
          "<b>Strip</b>: the six steps of the loop and the three speeds.",
          "<b>What makes it different / How we will prove it</b>: your four strengths and your test plan."])
@@ -848,7 +858,7 @@ h2("Round 2: the 10-slide deck")
 numbered(["Title + one-line pitch", "The physics of bufferbloat + your Day-0 numbers", "Architecture",
           "Classifier: features, abstention, accuracy vs port rules",
           "Capacity estimator + fault localiser: the S2 and S6 plots",
-          "Receipts + safety state machine", "Intent leases: API, budget, guarantees",
+          "Receipts + safety state machine", "Intent leases: API, budget, sanctions",
           "Evidence: 5 arms × 9 scenarios with confidence intervals; freezes and stalls",
           "Industry path: RDK-B/OpenWrt, fleet management, research tracks",
           "Limitations + roadmap + demo QR code"])
@@ -857,7 +867,7 @@ numbered(["Title + one-line pitch", "The physics of bufferbloat + your Day-0 num
 h1("18. Questions judges will ask, and how to answer")
 qa = [
     ("CAKE already fixes bufferbloat. What did you add?",
-     "Fault diagnosis before acting, guaranteed-rate leases, payload-free classification and receipts. Then "
+     "Fault diagnosis before acting, budgeted leases, payload-free classification and receipts. Then "
      "show the ablation chart against tuned SQM-CAKE and the real cake-autorate, including where we did not win."),
     ("How do you tell a speed drop from a slow far-away server?",
      "Near and far probes. Both slow with our queue empty means a WAN drop: cut. Only far slow means remote: "
@@ -869,7 +879,8 @@ qa = [
      "No, and we don't claim that. Receipts can say 'inconclusive'. Proof comes from repeated randomised lab "
      "experiments."),
     ("How do you guarantee no starvation?",
-     "HTB guaranteed rates within a budget during intents, and we measure every class's real progress."),
+     "CAKE's tin thresholds cap any boosted traffic, and we measure every class's real progress. Hard "
+     "guaranteed rates (HTB) are a later experiment."),
     ("Do you read user data?",
      "No. Only packet headers and timing. An optional, disclosed mode uses the router's own DNS/DHCP records."),
     ("What happens if VeriQ crashes?",
@@ -896,7 +907,8 @@ for q, a in qa:
 h1("19. Honest guarantees, limits, glossary and sources")
 h2("What VeriQ promises (and tests)")
 numbered(["Never inspects the content of forwarded traffic.", "Never gives priority to an uncertain flow.",
-          "Intent leases always expire.", "Guaranteed rates come from HTB, and progress is measured.",
+          "Intent leases always expire.", "Boosts are capped by CAKE, and progress is measured for everyone.",
+          "Sanctions on misbehaving flows always win over corrections and leases.",
           "Every applied setting is versioned and checked.", "A watchdog engages a SAFE shaper on failure."])
 h2("Known limits (say these before the judges do)")
 bullets(["Shaping below the line speed costs a few percent of bandwidth.",
@@ -992,7 +1004,7 @@ table([
     ["Rollback", "Fixed threshold, can undo a good change after the line itself got worse",
      "Recalculated for current conditions"],
     ["Cause diagnosis", "None", "WAN vs remote vs Wi-Fi vs bad probe"],
-    ["Guaranteed minimums", "CAKE tuning trick, no reservation", "HTB guaranteed rates + budget + measured progress"],
+    ["Protecting others", "CAKE tuning trick, no measurement", "CAKE-bounded boosts + budget + measured progress (HTB guarantees as a later experiment)"],
     ["Priority labels", "Rewrites DSCP (labels leak to the ISP)", "Internal marks only"],
     ["Intents", "Natural-language parser with low confidence (the case warns against chat-only AI)",
      "Structured, authenticated, expiring leases"],
@@ -1055,12 +1067,12 @@ bullets([
     "<b>ECN wording.</b> CAKE itself marks some packets 'congestion experienced'. That is normal and good. VeriQ "
     "never rewrites priority labels (DSCP) and sets no ECN bits itself.",
     "<b>Statistics.</b> Compare a p95 with a p95, never mix statistics. You need many samples for rare "
-    "percentiles: no p99.9 from 300 samples.",
+    "percentiles: 300 samples are insufficient to characterise p99.9 reliably.",
     "<b>Coverage.</b> Pings from the router can't see Wi-Fi, so every score says which part of the path it covers.",
     "<b>Shadow mode can't prove 'avoided mistakes'.</b> It only shows where VeriQ and cake-autorate disagree; "
     "the lab decides who was right.",
-    "<b>Budget maths.</b> Leases can hold at most 60% of the speed. The default class always keeps at least 40%. "
-    "If the line slows, leases shrink fairly.",
+    "<b>Missing evidence.</b> If an app sent too little to show whether the line could carry it, throughput is "
+    "'unknown' and the QoO score is shown as partial, never assumed to pass.",
 ])
 h2("Waiting until the core works (post-core experiments)")
 bullets(["A separate 'smooth traffic' lane (NQB, RFC 9956): shallow, not priority, and policed",
@@ -1078,6 +1090,21 @@ box("New answers for judges", ["<b>“Why classify if apps should mark?”</b> W
                                "<b>“Why is your accuracy lower than papers?”</b> Because we removed the shortcuts "
                                "that inflate them. Our number is lower but real."], "tip")
 
+h2("Version 3.2: five final corrections")
+table([
+    ["Fix", "In simple words"],
+    ["CAKE-only core", "Real guaranteed speeds (HTB) and switching between schedulers moved to 'later'. Core leases give "
+     "bounded preference."],
+    ["Safe step, fully defined", "When unsure: steps of ≤ 5%, at most 10% in total per 10 minutes, measured 10 s before "
+     "vs 10 s after. Kept only if the delay drop is explained by the queue moving into the router (so lucky, "
+     "unrelated improvements don't count) and downloads didn't lose more than the cut. Otherwise undone, "
+     "including when the result is 'inconclusive'."],
+    ["Sanctions win", "A flow caught misbehaving can't be promoted by the classifier, a user correction or a lease. "
+     "It recovers automatically after 60 s of good behaviour (doubling on repeats)."],
+    ["Wording", "'Insufficient to characterise p99.9 reliably' instead of 'impossible'."],
+    ["Unknown throughput", "No evidence means 'unknown'. QoO is withheld or clearly marked partial."],
+], [4.0, 12.4])
+
 # ---------------------------------------------------------------- appendix
 h1("Appendix: the other cases, and what the external review changed")
 h2("Case 4 (LabelTwin), our earlier recommendation")
@@ -1090,7 +1117,7 @@ table([
     ["Version 1 said", "Version 2 says"],
     ["A 15-second canary 'proves' a change helped", "Receipts can be inconclusive; proof only from controlled "
      "experiments"],
-    ["CAKE tins give minimum floors", "CAKE gives soft preference; HTB gives real guarantees"],
+    ["CAKE tins give minimum floors", "CAKE gives soft, bounded preference; HTB guarantees are a later experiment"],
     ["95% conformal coverage", "Coverage, selective accuracy and abstention reported separately"],
     ["MOS as a measurement", "MOS is estimated; freezes and stalls lead"],
     ["'Never reads payload' + DNS hints", "Precise wording; opt-in, disclosed tier"],

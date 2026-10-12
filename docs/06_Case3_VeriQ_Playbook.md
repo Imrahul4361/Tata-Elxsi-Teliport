@@ -111,12 +111,12 @@ Run **everything offline** with a local Jitsi Meet server: venue Wi-Fi must neve
 10. Angelopoulos & Bates 2021, *A Gentle Introduction to Conformal Prediction*
 
 ## 9. Panel Q&A bank
-1. **"CAKE already fixes bufferbloat. What did you add?"** Fault localisation before acting, guaranteed-rate leases for intents, payload-free class mapping, and receipts. Then show the **ablation chart** against tuned SQM-CAKE and the real cake-autorate, including where VeriQ did *not* win.
+1. **"CAKE already fixes bufferbloat. What did you add?"** Fault localisation before acting, budgeted leases for intents, payload-free class mapping, and receipts. Then show the **ablation chart** against tuned SQM-CAKE and the real cake-autorate, including where VeriQ did *not* win.
 2. **"How do you tell a capacity drop from congestion you caused, or from a slow remote server?"** Our queue building means we are the bottleneck (healthy). Our queue empty while **near and far** reflector delay rise means a WAN drop, so cut the shaper. **Only far** reflectors rising means a remote path, so hold. One reflector disagreeing means a bad measurement, so down-weight it. The lab scores these diagnoses against emulator ground truth.
 3. **"What if the classifier is wrong?"** We act only on single-class conformal sets; everything else is best effort and never promoted. We report coverage, selective accuracy and abstention rate separately, including under shift. Corrections become override rules.
 4. **"Can a 15-second before/after prove a policy helped?"** No, and we don't claim it does. Receipts are operational and return improved / degraded / **inconclusive**. Any regime change inside the window makes the result inconclusive, and rollback re-derives the delta for current capacity. Causal claims come only from randomised, repeated lab experiments with Holm correction.
-5. **"How do you guarantee no starvation?"** A non-zero config doesn't prove it, so we **measure progress** per class and host. Hard floors come from HTB guaranteed rates in lease mode, with admission control on a promotion budget. CAKE mode gives bounded preference with measured fairness.
-6. **"CPU cost on a real gateway?"** Measured on the Pi 5 (and ideally an A53 OpenWrt router): observer cost, control loop at 5 Hz, CAKE/HTB throughput ceiling.
+5. **"How do you guarantee no starvation?"** A non-zero config doesn't prove it, so we **measure progress** per class and host. In the core, a lease boosts a device inside CAKE, whose tin thresholds cap how much extra it can take. Hard guaranteed rates with HTB are a post-core experiment, because scheduler switching is the riskiest operation.
+6. **"CPU cost on a real gateway?"** Measured on the Pi 5 (and ideally an A53 OpenWrt router): observer cost, control loop at 5 Hz, CAKE throughput ceiling.
 7. **"How does this scale to millions of homes?"** The loop is local (no cloud dependency). Fleet management via TR-369 USP, staged canaries, federated model updates.
 8. **"IPv6? Wi-Fi? L4S?"** IPv6 tested in S8. Wi-Fi via AQL/airtime fairness in Phase 2. ECT(1) detection with DualPI2 on kernels ≥ 6.17.
 9. **"What is emulated?"** The ISP bottleneck (tbf/netem). It is labelled everywhere, and validated on the physical kit.
@@ -127,7 +127,8 @@ Run **everything offline** with a local Jitsi Meet server: venue Wi-Fi must neve
 
 13. **"Operators say apps should mark traffic, not networks guess. Why classify?"** VeriQ trusts NQB (DSCP 45) and L4S (ECT(1)) marks first, as long as the flow behaves. Most apps don't mark yet, so VeriQ classifies only unmarked flows, inside the user's own home, and says "not sure" when unsure.
 14. **"ML papers report 98%. Why is your accuracy lower?"** SIGCOMM 2025 showed many such results come from leaky splits and shortcut features. We split by flow and by time, hold out whole apps, and remove IP/port/TTL/sequence features. Our number is lower but real.
-15. **"What if the diagnosis is uncertain but the call is suffering?"** One bounded cut of ≤ 10%, kept only if delay improves and logged as UNCERTAIN. Repeated uncertainty raises an alert instead of cutting again.
+15. **"What if the diagnosis is uncertain but the call is suffering?"** Small steps of ≤ 5%, at most 10% in total per 10 minutes. Each step is kept only if near-probe delay drops *and* the queue visibly moved into the router (so an unrelated improvement isn't credited) *and* downloads didn't lose more than the cut. NOT IMPROVED or INCONCLUSIVE → revert. Repeated uncertainty → alert.
+17. **"What if a download pretends to be voice traffic?"** It is sanctioned within about a second. Sanctions beat the classifier, user corrections and leases, and lift only after 60 s of good behaviour (doubling on repeats).
 16. **"Did you run it safely?"** New installs start in shadow mode with one log row per decision. Beside cake-autorate we report disagreements, and judge them only in the lab where the true fault is known.
 
 ## 10. Credibility rules for every slide

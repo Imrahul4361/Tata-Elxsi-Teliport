@@ -237,7 +237,7 @@ def build_case3(slide):
     ], fill=CARD2, title_color=AMBER)
     card(slide, 8.86, y, 4.17, h, "Bounded by design", [
         "Never inspects forwarded payload; headers + timing; IPv4 + IPv6",
-        [("• ", 10.5, True, BLUE), ("Intents = expiring leases with real HTB guaranteed rates from a budget; progress measured", 10.5, True, INK)],
+        [("• ", 10.5, True, BLUE), ("Intents = expiring, budgeted leases; CAKE caps any boost; misbehaving flows sanctioned; progress measured", 10.5, True, INK)],
         "Abstains when unsure: never promotes an uncertain flow",
         "Shadow mode first; every decision logged; watchdog → SAFE shaper",
     ])
@@ -247,7 +247,7 @@ def build_case3(slide):
         (1.86, "Observe", "Header + timing of first packets per flow, app marks (NQB / L4S); v4/v6; no payload"),
         (2.12, "Understand", "Marks first, then a calibrated classifier (abstains) · capacity μ ± σ + UDPST idle test (RFC 9946) · fault localiser"),
         (2.04, "Decide", "Bounded guardrails: shaper = μ − kσ, change-point fast path · leases within budget"),
-        (1.86, "Enforce", "CAKE (default) or HTB guaranteed mode; ordered, versioned, read-back apply"),
+        (1.86, "Enforce", "CAKE with bounded lease boosts; ordered, versioned, read-back apply"),
         (2.04, "Assess", "Receipts on WebRTC freezes, DASH rebuffers, delay, progress; estimated MOS labelled"),
         (1.71, "Show", "Grafana · 3D twin + replay: measured / estimated / illustrative"),
     ], dark="Assess")
@@ -273,7 +273,7 @@ def build_case3(slide):
     ], fill=RGBColor(0xEC, 0xF7, 0xF1), title_color=GREEN)
 
     footer(slide, [
-        ("Stack: ", "Linux tc (CAKE · HTB · fq_codel) · Python + pyroute2 control plane · LightGBM + conformal · Prometheus/Grafana · React + three.js · Playwright (WebRTC, dash.js) · iperf3 / irtt / Flent"),
+        ("Stack: ", "Linux tc (CAKE; HTB later) · Python + pyroute2 control plane · LightGBM + conformal · Prometheus/Grafana · React + three.js · Playwright (WebRTC, dash.js) · iperf3 / irtt / Flent"),
         ("Industry path (designed, not built): ", "RDK-B / OpenWrt package · TR-181 + TR-369 USP fleet management · research tracks: eBPF datapath, Wi-Fi airtime, L4S, multi-gig scaling"),
     ])
 
