@@ -17,6 +17,7 @@ The authoritative spec is now `docs/11_VeriQ_v5_Final_Design.md`. docs/09 (v4.1)
 | C11 | Watchdog = procd instance (POSIX sh) | Platform | OpenWrt | Time-to-safe test | — |
 | C12 | Evaluation adds the QoSmate head-to-head and A1–A32 | Scope | Measurable comparison | H1–H4 | — |
 | C13 | Diagnosis label CPU_LIMITED added | Precision | CPU-bound throughput must not read as a capacity drop | A17 | — |
+| C15 | Default class mark: every flow gets CLASS = BE, PROV = default on its first packet in either direction; chain `cls_down` also carries the download envelope | Correction | CAKE `wash` clears DSCP only after tin selection, so unmarked download packets would follow ISP DSCP; docs/09 A.8 first-packet rule now holds only for each flow's very first packet | Self-test with ISP-marked download | — |
 | C14 | Mark layout: CLASS 24–26, PROV 27–29, SANCT 30 (avoids mwan3 and pbr bits) | Precision | Kernel-side precedence; coexistence | Self-test + conflict scan | — |
 
 **Errata (12 Oct 2026):** the docs/11 §10 "(read)" facts about QoSmate autorate were corrected after a second reading of the main loop. All-unreachable reflectors make it substitute the last good latency, and a direction guard protects an idle direction. Rows A6, A9, A14 and A29 and parity row 25 were updated.

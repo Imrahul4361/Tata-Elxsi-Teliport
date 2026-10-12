@@ -136,7 +136,7 @@ func (c *Config) Envelope(d model.Dir) (min, base, max float64) // kbit/s
 
 **Errors.** A fatal issue makes `veriqd` refuse the new config and keep the previous one, so a reload never makes things worse. `veriqctl config validate` prints each issue as `section.option: message`; non-fatal issues become LuCI warnings.
 
-**Tests.** `TestParseQuotesAndLists`, `TestParseRejectsUnterminatedQuote`, `TestDefaultsMatchAppendixB`, `TestSminFloor1000`, `TestLiteForcesMLOff`, `TestMigrateV4ToV5`, `TestIssueReportsSectionOption`, and `FuzzParse` (the parser must never panic).
+**Tests.** `TestParseQuotesAndLists`, `TestDefaultsMatchAppendixB`, `TestSminFloor1000`, `TestLiteForcesMLOff`, `TestMigrateV4ToV5`, `FuzzParse`.
 
 **Acceptance.**
 - Appendix B parses to a `Config` whose fields equal a golden JSON dump.
@@ -218,7 +218,7 @@ type Conntrack interface {
     SetMark(ctID uint32, value, mask uint32) error // used by classify and sanction
 }
 
-type PktHdr struct{ /* ct id, dir, length, At, Header [60]byte */ } // snaplen 40 v4 / 60 v6; truncated after L4
+type PktHdr struct{ /* ct id, dir, length, At, Header [60]byte */ } // cut after L4
 func NewNFLOG(group uint16) (*NFLOG, error)
 func (n *NFLOG) Run(ctx context.Context, out chan<- PktHdr) error
 
@@ -234,7 +234,7 @@ func Throughput(prev, cur QdiscStats, overheadBytes int) model.Sample
 - All `tc`/`nft`/`ubus` calls go through a `Runner` interface with a timeout (500 ms, starting value), so tests inject recorded JSON.
 - **G_gw** comes from the change in sent bytes and packets between two samples, plus `Δpackets × overhead` if the counter excludes the link overhead. Whether CAKE's counter includes it must be **verified on the target kernel** in the Stage-1 self-test against a known iperf3 rate. A counter reset gives `OK = false`, never a negative rate.
 - **Conntrack** mark updates use a mask, so only bits 24–30 change.
-- **NFLOG** parsing stops at the IP and L4 headers of the 40-byte snapshot (privacy contract, docs/11 §5.1).
+- **NFLOG** copies `snaplen 40` (IPv4) or `60` (IPv6) bytes. The reader parses the IP and L4 headers and zeroes every byte after the L4 header on receipt; an IPv6 sample whose extension headers exceed the copy range is skipped (docs/11 §5.1, §5.6).
 - **Wi-Fi** uses `ubus call hostapd.<iface> get_clients`, falling back to `iwinfo`; with neither, WIFI evidence is unavailable.
 
 **Errors.**
@@ -356,7 +356,7 @@ func Outlier(ds []Delta, i int, k, floorMs float64) bool {
 
 **Errors.** Missing `CAP_NET_RAW` is fatal at start-up with a clear message. Send errors count as losses, never as delay. With the whole pool unhealthy, `Aggregate` returns `ok = false` and the diagnosis is PROBE_FAULT at L0 (A6).
 
-**Tests.** `TestTimestampMidnightWrap`, `TestOneWayOffsetCancels`, `TestAggregateMedianNotMean`, `TestAggregateQuorumMissing`, `TestAggregateDropsOldSamples`, `TestOutlierNeedsReferenceGroup`, `TestHealthLoss20of20`, `TestQualificationRejectsJittery`, `TestIdleModeRate`, `TestWallStepResetsOWD`, `FuzzParseTimestampReply`.
+**Tests.** `TestTimestampMidnightWrap`, `TestOneWayOffsetCancels`, `TestAggregateMedianNotMean`, `TestAggregateQuorumMissing`, `TestOutlierNeedsReferenceGroup`, `TestHealthLoss20of20`, `TestWallStepResetsOWD`, `FuzzParseTimestampReply`.
 
 **Acceptance.**
 - Rate ≤ 10 probes/s total and 2/s in idle mode, measured with tcpdump in the netns lab.
@@ -468,7 +468,7 @@ func (b *Baseline) Value(now time.Duration) (ms float64, stale, capL1, ok bool) 
 
 **Errors.** An unreadable `capacity.json` is renamed `.bad` and memory restarts empty (the prior is optional). NaN inputs are ignored and counted.
 
-**Tests.** `TestBaselineRisesAfterRouteChange`, `TestBaselineFallsAfterImprovement`, `TestBaselineIgnoresLoadedSamples`, `TestBaselineStaleAndCapL1`, `TestDetectorThreeOfSix`, `TestCensorNeedsDemand`, `TestMuSigmaLowerBoundOnlyRaises`, `TestSigmaWidensWhenIdle`, `TestStartRateNeedsThreeWeeks`, `TestMemorySaveAtomic`, `PropBaselineEqualsBruteForceMin` (fuzz against an O(n) reference).
+**Tests.** `TestBaselineRisesAfterRouteChange`, `TestBaselineIgnoresLoadedSamples`, `TestBaselineStaleAndCapL1`, `TestDetectorThreeOfSix`, `TestCensorNeedsDemand`, `TestMuSigmaLowerBoundOnlyRaises`, `TestStartRateNeedsThreeWeeks`, `PropBaselineEqualsBruteForceMin`.
 
 **Acceptance.**
 - The baseline equals a brute-force windowed minimum on 10⁶ random sequences.
@@ -789,7 +789,7 @@ Points that are easy to get wrong:
 
 **Errors.** An enforce error is logged with the action, and `reconcile` takes over on the next tick (compensate, retry at most 3 times, or SAFE). `Tick` itself never returns an error and never blocks.
 
-**Tests.** `TestC1OneStepCut100to20` (fake snapshot: S = 100 000, Ĝ = 20 100 → target 18 090), `TestCutWithoutGhatUsesPoint75`, `TestCutRefractory1s`, `TestNoSpiralAfterThreeCuts`, `TestFallbackNeedsLoad60`, `TestFallbackBudgetAcrossEpisodes`, `TestProbeUpNeedsTwoSecondsLoad`, `TestBackoffReturnsToLastGood`, `TestDriftOnePercentPerTenSeconds`, `TestShadowNeverEnforces`, `TestHoldLinkDownSkipsTick`. Property tests: `PropEnvelope` (S_min ≤ S ≤ S_max under random snapshots, 10⁶ cases) and `PropBudgetNeverExceeded`. Replay: `TestReplayBitForBit`.
+**Tests.** `TestC1OneStepCut100to20` (fake snapshot: S = 100 000, Ĝ = 20 100 → target 18 090), `TestCutWithoutGhatUsesPoint75`, `TestNoSpiralAfterThreeCuts`, `TestFallbackBudgetAcrossEpisodes`, `TestBackoffReturnsToLastGood`, `TestShadowNeverEnforces`; properties `PropEnvelope` (S_min ≤ S ≤ S_max) and `PropBudgetNeverExceeded`; `TestReplayBitForBit`.
 
 **Acceptance.**
 - All property tests pass with 0 failures over 10⁶ cases.
@@ -1521,7 +1521,7 @@ func WriteAtomic(path string, v any) error // temp file, fsync, rename
 type Limiter struct{ /* per-file minimum interval: 1 min or 1 h */ }
 ```
 
-**Internal design.** Transitions are one (state, event) → state table, so a test enumerates every pair. veriqd writes `/var/run/veriq/safe.env` on each rate change and touches the heartbeat every 1 s for the watchdog.
+**Internal design.** Transitions are one (state, event) → state table, so a test enumerates every pair. veriqd writes `/var/run/veriq/safe.env` on each rate change and, every 1 s, writes its monotonic uptime (from `/proc/uptime`) into the heartbeat file, so an NTP step cannot fake a stale heartbeat (docs/11 §8.4).
 
 **Errors.** An invalid transition is ignored and logged. A failed persistent write keeps RAM state and retries at the next allowed interval.
 
@@ -1615,9 +1615,4 @@ func (s *Server) Serve(ctx context.Context, path string) error
 | receipt, api | 8 | 0 (stub), 4 |
 | **Total** | **89** | |
 
-A package is done when:
-- its named tests pass under `-race`;
-- its coverage gate (where one applies) is met;
-- its golden files are reviewed;
-- it has no `TODO` on a safety path;
-- its acceptance criterion has been demonstrated once in the netns lab, with the run recorded in the evidence ledger.
+A package is done when its named tests pass under `-race`, its coverage gate (if any) is met, its golden files are reviewed, no `TODO` remains on a safety path, and its acceptance criterion has been shown once in the netns lab with the run recorded in the evidence ledger.

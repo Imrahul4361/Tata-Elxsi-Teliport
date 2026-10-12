@@ -227,7 +227,7 @@ If `act_ctinfo cpmark` is missing or broken on a target, open decision O3 applie
 
 > **Implementation tip.** The first packets of a new download connection may arrive before the upload side has classified the flow. They carry CLASS = 0 and are scheduled by CAKE's own DSCP rules. Marks never apply retroactively (docs/09 A.8). A device with an active lease is the exception: its first upload packet already matches the lease set.
 
-> **Implementation tip (verify in Stage 1).** CAKE's `wash` clears DSCP *after* tin selection, so a CLASS = 0 packet on the IFB is placed by the DSCP it arrived with, possibly set by the ISP. On upload, docs/11 allows washing by CAKE or by an nft rule; the nft rule before CAKE is the recommended choice, so CLASS = 0 means Best Effort in practice. The tin self-test must send a CLASS = 0 packet with a preferential DSCP in each direction; any mitigation adopted for download is recorded in docs/12.
+> **Implementation tip (verify in Stage 1).** CAKE's `wash` clears DSCP *after* tin selection, so a CLASS = 0 packet on the IFB is placed by the DSCP it arrived with, possibly set by the ISP. On upload, docs/11 allows washing by CAKE or by an nft rule; the nft rule before CAKE is the recommended choice, so CLASS = 0 means Best Effort in practice. The tin self-test must send a CLASS = 0 packet with a preferential DSCP in each direction; The adopted mitigation is change C15 (docs/12): every flow receives CLASS = BE, PROV = default on its first packet in either direction, so only a flow's very first packet can still follow ISP DSCP.
 
 ## The three backends in depth
 

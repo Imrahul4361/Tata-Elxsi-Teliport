@@ -107,46 +107,42 @@ Three base chains attach to netfilter hooks. Everything else is a regular chain 
  output, prio mangle+5: sys_out (router's own probes: SO_MARK -> ct mark)
 ```
 
-| Chain | Type and hook | Purpose | Terminates by |
-|---|---|---|---|
-| `cls_up` | filter, forward, `mangle + 5` | The precedence pipeline (levels 1–7) on LAN → WAN packets; dispatches download packets to `down_path` | `goto envelope`, `return` (policy accept) |
-| `police` | regular (jumped) | Per-device policers: drop above a rate. A **policer, not a shaper** | falls back to `cls_up` |
-| `down_path` | regular | Download packets: optional nft wash (HFSC/HTB), then envelope metering of preferential flows | `goto envelope` or end |
-| `envelope` | regular | Per-flow eligibility meters for RT and IV, one set of meters per direction | `goto sanction` or end |
-| `sanction` | regular | Force BE, set SANCT, add the flow to `@sanctioned`, notify veriqd via NFLOG group 8 | end |
-| `mark_out` | filter, postrouting, `mangle + 10` | Copies CLASS from ct mark to the packet mark for egress CAKE/HFSC/HTB; nft egress wash; compat-mode DSCP store | end |
-| `sys_out` | filter, output, `mangle + 5` | Gives router-originated probes PROV 7 in the ct mark so their replies ride the same tin | end |
+| Chain | Hook | Purpose |
+|---|---|---|
+| `cls_up` | forward, `mangle + 5` | Precedence pipeline (levels 1–7) on LAN → WAN packets; sends download packets to `down_path` |
+| `police` | jumped | Per-device policers (drop above a rate: a **policer, not a shaper**) |
+| `down_path` | goto | Download: optional nft wash (HFSC/HTB), then envelope metering |
+| `envelope`, `envelope_dn` | goto | Per-flow eligibility meters for RT and IV, per direction |
+| `sanction` | goto | Force BE, set SANCT, add to `@sanctioned`, notify veriqd (NFLOG group 8) |
+| `mark_out` | postrouting, `mangle + 10` | CLASS from ct mark to packet mark; nft egress wash; compat-mode DSCP store |
+| `sys_out` | output, `mangle + 5` | Router-originated probes get PROV 7 in the ct mark |
 
-The forward hook sees the original LAN address on upload (source NAT happens later, in postrouting) and the LAN address on download (destination NAT has already been reversed in prerouting). That is why device, lease and policer sets hold LAN addresses only.
+The forward hook sees LAN addresses in both directions (source NAT happens later; destination NAT was already reversed), so device, lease and policer sets hold LAN addresses only.
 
 ### Sets and meters
 
-| Set | Type and flags | Populated by | Kind | Purpose |
+| Set | Type, flags | Filled by | Kind | Purpose |
 |---|---|---|---|---|
-| `wan_ifs` | `ifname` | veriqd on ifup | runtime | WAN device names. Matching a set, not a literal, means a renamed PPPoE device needs an element change, not a ruleset reload |
-| `state_bypass` | `meta nfproto` | veriqd | runtime | Level 1: holds `{ ipv4, ipv6 }` while the table is being disabled |
-| `trusted_dscp4/6` | address, `interval` | config | static | Sources whose DSCP is trusted (used by step 0 and H2) |
-| `lease_rt4/6`, `lease_iv4/6` | address, `timeout` | veriqd (checker-approved) | runtime | Device leases; element timeout = remaining lease time |
-| `sanctioned` | `ct id`, `dynamic, timeout` | kernel (`sanction`), veriqd (escalation) | runtime | Flows under penalty |
-| `dev_<name>_4/6` | address | veriqd (DHCP leases + neighbour table) | runtime | A named device's IPv4 and all its IPv6 addresses |
-| `app_<id>_4/6` | address, `timeout` | dnsmasq-full `nftset` | runtime | Catalogue app destinations from the router's own resolver |
-| `<user ipset>` | address, `timeout` if dynamic | config or dnsmasq | static or runtime | QoSmate-compatible static and dynamic IP sets |
-| `bulk_tcp_ports`, `bulk_udp_ports` | `inet_service`, `interval` | config | static | Heuristic H5 |
-| `rt_up_b`, `rt_up_p`, `iv_up_b`, `rt_dn_b`, `rt_dn_p`, `iv_dn_b` | `ct id`, `dynamic, timeout` | kernel | runtime meters | Eligibility envelope (bytes `_b`, packets `_p`) per direction |
-| `pol_<name>_up4/dn4` (and `6`) | address, `dynamic, timeout` | kernel | runtime meters | Per-device policers |
-| `slowtcp` | `ct id`, `dynamic, timeout` | kernel | runtime meter | H3 (HFSC/HTB only) |
+| `wan_ifs` | `ifname` | veriqd on ifup | runtime | WAN devices; a renamed PPPoE device is an element change, not a reload |
+| `state_bypass` | `meta nfproto` | veriqd | runtime | Level 1 bypass while disabling |
+| `trusted_dscp4/6` | address, interval | config | static | Trusted DSCP sources (step 0, H2) |
+| `lease_rt4/6`, `lease_iv4/6` | address, timeout | veriqd after ACCEPT | runtime | Device leases; timeout = remaining time |
+| `sanctioned` | `ct id`, dynamic, timeout | kernel; veriqd escalates | runtime | Flows under penalty |
+| `dev_<name>_4/6` | address | veriqd (DHCP + neighbours) | runtime | A device's IPv4 and all IPv6 addresses |
+| `app_<id>_4/6`, user ipsets | address, timeout | dnsmasq-full `nftset` or config | runtime/static | App and user destinations |
+| `bulk_tcp_ports`, `bulk_udp_ports` | `inet_service`, interval | config | static | H5 |
+| `rt_up_b/_p`, `iv_up_b`, `rt_dn_b/_p`, `iv_dn_b` | `ct id`, dynamic, timeout | kernel | meter | Envelope (bytes `_b`, packets `_p`) |
+| `pol_<name>_up4/dn4`, `slowtcp` | address or `ct id`, dynamic | kernel | meter | Policers; H3 |
 
-docs/11 keys the envelope meters by `ct id . ct direction`. The template keeps **one set per direction**, because the thresholds differ by direction. Within one set the direction is therefore constant, so the key reduces to `ct id` with the same meaning and shorter rules.
-
-"Static" sets are derived from the configuration and are rebuilt on every apply. "Runtime" sets hold live state (leases, sanctions, learned addresses) and must survive a configuration reload (see "The apply transaction" below).
+docs/11 keys envelope meters by `ct id . ct direction`. Because the template keeps one set per direction (the thresholds differ), the direction is constant within a set and the key reduces to `ct id` with the same meaning. **Static** sets are rebuilt from config on every apply; **runtime** sets hold live state and must survive a reload.
 
 ## The annotated nftables template
 
-The template below is the complete ruleset for table `inet veriq`, in render order. It is shown in five parts; the worked render later in the chapter shows the same file filled in. Template conditionals (`{{if …}}`) mark the parts that depend on the backend, the profile or the configuration.
+The complete ruleset, in render order, in five parts; the worked render later shows it filled in.
 
 ### Part 1: the apply transaction, defines and sets
 
-`nft -f` applies a whole file as **one kernel transaction**: either every line takes effect or none does. The header uses that property to replace the rules atomically while keeping live set contents.
+`nft -f` applies a file as **one kernel transaction**. The header replaces all rules atomically while keeping live set contents.
 
 ```nft
 #!/usr/sbin/nft -f
@@ -211,21 +207,13 @@ table inet veriq {
     set iv_dn_b { typeof ct id; size 8192; flags dynamic, timeout; timeout 2m; }
     set bulk_tcp_ports { type inet_service; flags interval; {{.BulkTCPElems}} }
     set bulk_udp_ports { type inet_service; flags interval; {{.BulkUDPElems}} }
-{{range .Devices}}    set dev_{{.Key}}_4 { type ipv4_addr; }
-    set dev_{{.Key}}_6 { type ipv6_addr; }
-{{end}}{{range .Apps}}    set app_{{.ID}}_4 { type ipv4_addr; flags timeout; timeout 1h; }
-    set app_{{.ID}}_6 { type ipv6_addr; flags timeout; timeout 1h; }
-{{end}}{{range .UserIPSets}}    {{.Decl}}
-{{end}}{{range .Policers}}    {{.MeterDecls}}
-{{end}}
+    {{.DeviceAppUserAndPolicerSets}}       # dev_*, app_*, user ipsets, pol_*, slowtcp
 ```
 
 Points to note:
 
-- **Runtime sets keep their elements.** `flush table` removes rules, not sets **[verify]**. A Stage-1 test must confirm that a lease element and a sanction element both survive a reload. Static sets (trusted sources, bulk ports, static user IP sets) are deleted and re-declared with their elements, so a port the user removed really disappears. A set whose *definition* changed (for example a new default timeout) is also in `StaticSetsToDelete`. veriqd re-adds its runtime elements in the same file.
-- **Defines live outside the table.** Anonymous-set defines (`P_LT4`, `PREF`) are used as `ct mark & $PROV $P_LT4`, a masked lookup in an anonymous set **[verify]**.
-- **Meter timeouts.** A meter element that sees no packets for 2 minutes disappears. That bounds memory; a flow that pauses longer simply starts with a full token bucket. The `size` values are rendering assumptions sized for the Standard profile and can be halved for Lite.
-- **The `ct id` keys.** `ct id` is unique per live connection. When the connection ends, its meter and sanction elements time out naturally.
+- **Runtime sets keep their elements**, because `flush table` removes rules, not sets **[verify]**; a Stage-1 test checks that a lease and a sanction element survive a reload. Static sets, and any set whose definition changed, are deleted and re-declared, and veriqd re-adds runtime elements in the same file.
+- **Meters** time out after 2 minutes without packets, which bounds memory; the `size` values are Standard-profile assumptions (halve for Lite). `ct id` is unique per live connection.
 
 ### Part 2: chain `cls_up`, the precedence pipeline
 
@@ -303,21 +291,20 @@ Points to note:
     }
 ```
 
-How the pipeline maps to the precedence levels of docs/11 §5.2:
+How the pipeline maps to docs/11 §5.2:
 
-- **Level 1 (state).** The `state_bypass` set realises the docs/11 rule "if `@state_bypass` contains 1, return". nft cannot test a constant against a set, so the key is `meta nfproto`, and veriqd adds both families to switch the bypass on in one atomic element update **[verify]**. SAFE does **not** bypass classification. In DISABLED the whole table is deleted.
-- **Level 2 (sanction).** Two rules. A flow whose `ct id` is still in `@sanctioned` returns immediately: it stays BE and is not metered. A flow whose element has expired gets its VeriQ bits cleared and is re-classified. "Silence counts as good behaviour": a sparse app never has to send traffic to recover.
-- **Level 3 (lease).** A lease matches from the **first packet** of a connection (docs/09 A.8), because the device address is in the set before the connection exists. The "lease ended" rule handles a long-lived flow that outlives its lease: its PROV 6 mark is cleared and it is re-classified at the next levels.
-- **Level 4 (user).** User-rule decisions are sticky for the life of the connection. That is cheap and predictable, and it matches how QoSmate users expect a rule to behave. When a rule is deleted or its schedule ends, veriqd clears PROV 5 from the affected live flows over conntrack netlink (an **implementation tip**, so that "rule off" takes effect at once rather than when flows end).
-- **Level 5 (app mark).** NQB (DSCP 45, `0x2d`) maps to IV, not RT. Voice-Admit (44, `0x2c`) maps to RT. DSCP 1 (Lower Effort) and CS1 map to BK.
-- **Level 6 (heuristics and ML).** Shown in Part 4. ML writes come from veriqd, and only when the stored PROV is below 3, in LIVE.
-- **Level 7 (default).** Nothing is written.
+- **Level 1.** nft cannot test a constant against a set, so `@state_bypass` is keyed by `meta nfproto`; veriqd adds `{ ipv4, ipv6 }` in one element update **[verify]**. SAFE does **not** bypass classification; DISABLED deletes the table.
+- **Level 2.** A flow still in `@sanctioned` returns at once: BE, not metered. An expired flow has its bits cleared and is re-classified. Silence counts as good behaviour.
+- **Level 3.** A lease matches from the **first packet** (docs/09 A.8). The "lease ended" rule re-classifies a flow that outlives its lease.
+- **Level 4.** User-rule decisions are sticky for the connection's life. When a rule is deleted or its schedule ends, veriqd clears PROV 5 on affected live flows over conntrack netlink (**implementation tip**: "rule off" then acts at once). The validated `inline.nft` content is pasted in, not `include`d, so the candidate is self-contained for `nft -c` and the support bundle. Each user rule carries `comment "veriq:rule:<name>"` so read-back maps counters to rules; RT/IV rules end in `goto envelope`, BE/BK rules in `return`.
+- **Level 5.** NQB (45, `0x2d`) maps to IV, Voice-Admit (44, `0x2c`) to RT, CS1 and Lower Effort (1) to BK.
+- **Level 6.** Heuristics are in Part 4. ML verdicts come from veriqd over netlink, only when stored PROV < 3 and only in LIVE. **Level 7** writes nothing.
 
-Precedence is monotonic by construction. Every rule that writes a class is guarded so that it can only fire when the stored PROV is lower than its own. The property test "a higher PROV is never overwritten by a lower one" (docs/11 §14.4) runs against this template in a network namespace.
+Every class-writing rule is guarded so it fires only when the stored PROV is lower than its own, so precedence is monotonic by construction; the property test "a higher PROV is never overwritten" (docs/11 §14.4) runs against this template in a network namespace.
 
-**Inline statements and user rules.** `/etc/veriq.d/inline.nft` holds statements only. veriqd pastes its validated content at the `{{.InlineStatements}}` position instead of using an nft `include`. The candidate file is then self-contained for `nft -c` and for the support bundle. Each compiled user rule carries a comment with its UCI name, for example `comment "veriq:rule:Console"`, so the read-back can map counters back to rules. A user rule that sets RT or IV ends in `goto envelope`; one that sets BE or BK ends in `return`.
+**Sampling privacy.** The NFLOG copy range is fixed per family (40 bytes IPv4, 60 bytes IPv6), so a sample can include a few payload bytes (for example 12 bytes of a UDP datagram on IPv4). veriqd zeroes every byte after the parsed L4 header on receipt, before any processing, and skips IPv6 samples whose extension headers run past the copy range (docs/11 §5.6). One named limit keeps the 4000 packets/s budget shared by both families.
 
-**Device + app leases.** A lease can cover one app on one device. For an app defined by ports, the renderer adds a rule such as `ip saddr @lease_app_zoom_iv4 udp dport 8801-8810 ct mark set … goto envelope`. For an app defined by domains it matches `ip daddr @app_zoom_4` instead. The per-app lease sets exist for every enabled catalogue app and stay empty until a lease is granted.
+**Device + app leases.** For a port-defined app the renderer adds, for example, `ip saddr @lease_app_zoom_iv4 udp dport 8801-8810 ct mark set … goto envelope`; a domain-defined app matches `ip daddr @app_zoom_4`. These per-app lease sets stay empty until a lease is granted.
 
 ### Part 3: chains `down_path`, `envelope` and `sanction`
 

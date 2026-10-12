@@ -191,7 +191,7 @@ def fig04():
               ("4  User rule / correction", "QoSmate-compatible + device/app/schedule", NAVY),
               ("5  App mark (DSCP)", "EF/CS5/VA→RT · AF4x/CS4/NQB→IV · CS1/LE→BK", BLUE),
               ("6  Classifier", "ML singleton (conformal) · heuristics demote only", IV),
-              ("7  Default", "no mark → CAKE uses packet DSCP (BE after wash)", BK)]
+              ("7  Default", "first packet → CLASS BE, PROV default (C15)", BK)]
     s.text(250, 30, "Higher level wins (enforced in the kernel via provenance bits)", 14, weight="bold", color=NAVY)
     for i, (t, sub, c) in enumerate(levels):
         y = 50 + i * 66

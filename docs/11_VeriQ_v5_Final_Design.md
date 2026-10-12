@@ -185,7 +185,7 @@ Provenance bits let the **kernel** enforce precedence without a round trip to th
 | Backend | When | Egress | Ingress | Notes |
 |---|---|---|---|---|
 | `cake` (default) | CPU headroom at the configured rate (§12.5 bench) | `cake bandwidth S_up diffserv4 dual-srchost nat fwmark 0x07000000 [ack-filter] [wash] overhead … mpu …` | Same on `ifb-veriq` with `dual-dsthost nat ingress` | CAKE's sparse-flow boost already favours short interactive flows, so the "slow-TCP upgrade" heuristic is **off** for CAKE (§5.5) |
-| `hfsc` | Gamers wanting a hard realtime curve; mid-range CPU | HFSC root, 5 classes; RT class `rt m1/d/m2` sized from the RT budget; leaves: RT = `fq_codel` (or `pfifo` with computed limit), others `fq_codel` | Same on IFB | RT budget defaults to `max(400 kbit, 15% of S)` (as QoSmate's GAMEUP formula), configurable |
+| `hfsc` | Gamers wanting a hard realtime curve; mid-range CPU | HFSC root, 5 classes; RT class `rt m1/d/m2` sized from the RT budget; leaves: RT = `fq_codel` (or `pfifo` with computed limit), others `fq_codel` | Same on IFB | RT budget defaults to `15% of S + 400 kbit` (QoSmate's GAMEUP formula, read), configurable |
 | `htb` | Weakest CPUs | HTB root, 3 classes (RT+IV merged high, BE, BK), `fq_codel` leaves, rate-scaled parameters | Same on IFB | Lowest CPU cost; no host isolation (documented) |
 
 **Rate updates** (from the controller) always apply in a valid order:
@@ -261,8 +261,8 @@ Evaluation runs in nft table `inet veriq`, chain `cls_up` (hook forward, priorit
 | 4 | 4 (user) | `ct mark & PROV == PROV_USER` → goto `envelope_or_return` (sticky). Then the compiled user rules in order; first match sets CLASS + PROV = 5 | User rules = QoSmate-compatible rules + device/app/schedule targets |
 | 5 | 5 (app mark) | Only if `PROV < 4`: `ip dscp {ef, cs5, 44}` → RT; `{af41, af42, af43, cs4, 45}` → IV; `{cs1, 1}` → BK; PROV = 4 | NQB (45) maps to IV, not RT: NQB means "does not build queues", not "priority" |
 | 6 | 6 (classifier) | ML singleton verdicts are written by veriqd via conntrack update (PROV = 3) only when the stored PROV < 3. Heuristics run in the kernel only when `PROV ≤ 2`, and **only demote or reset** (§5.5) | Abstention writes nothing |
-| 7 | 7 (default) | Nothing: CLASS = 0, so CAKE uses the packet DSCP (BE after washing) | — |
-| E | envelope | For CLASS ∈ {RT, IV}: per-flow meters (§5.7); violation → CLASS = BE, SANCT = 1, `add @sanctioned {ct id timeout 60s}` (keyed by flow, so both directions are sanctioned), NFLOG group 8 → veriqd | Applies to every source of preference, leases included |
+| 7 | 7 (default) | `ct mark & PROV == 0` → CLASS = BE, PROV = 1 (default) on the first packet seen in **either** direction (also in chain `cls_down`) | C15: after the first packet a flow's tin never depends on ISP-set DSCP. CAKE `wash` clears DSCP only after tin selection, so without this default a download packet would be placed by the ISP's DSCP |
+| E | envelope | For CLASS ∈ {RT, IV}, in chain `envelope` (upload, from `cls_up`) **and** chain `cls_down` (hook forward, `iifname` WAN, which sees download packets after IFB shaping): per-flow meters keyed `ct id . ct direction` (§5.7); violation → CLASS = BE, SANCT = 1, `add @sanctioned {ct id timeout 60s}` (keyed by flow, so both directions are sanctioned), NFLOG group 8 → veriqd | Applies to every source of preference, leases included |
 
 **Operating states and the pipeline:**
 - In **SHADOW**, veriqd does not write ML verdicts. It logs what it *would* write. User rules, leases and envelopes stay active, because they are deterministic user configuration.
@@ -300,6 +300,8 @@ VeriQ additions:
 - a failing rule is reported with its name and the nft error, and **the previous ruleset stays active**;
 - apply is atomic (`nft -f` is a single transaction).
 
+**Import order:** QoSmate evaluates every rule, so the **last** match wins (read). VeriQ's first match wins, so the importer reverses the rule order and reports the mapping.
+
 **Inline and custom nft:**
 - `/etc/veriq.d/inline.nft` holds statements only, included in `cls_up` at step 4 before the user rules (the same semantics as QoSmate's inline rules);
 - `/etc/veriq.d/custom.nft` holds a separate table `inet veriq_custom`;
@@ -324,7 +326,7 @@ A catalogue is a signed JSON file shipped in package `veriq-catalog`, with user 
 | ID | Heuristic | Action | Default (cake) | Default (hfsc/htb) | Origin |
 |---|---|---|---|---|---|
 | H1 | **Sustained bulk TCP**: `ct bytes > 10 s × S_down_base` (as QoSmate's `first10s`) or (duration > 30 s and average rate > 30% of S) | CLASS = BK, PROV = 2 | on | on | adapted from QoSmate |
-| H2 | **New-flow reset**: flows below the 500 ms byte threshold that carry a preferential DSCP from an untrusted source | CLASS = 0 (DSCP decides) | on | on | adapted from QoSmate `mark_500ms` |
+| H2 | **New-flow reset**: flows below the 500 ms byte threshold that carry a preferential DSCP (EF, CS5, VA 44, AF41–43, CS4, NQB 45) from a source outside `@trusted_dscp` (only active when `trust = list`) | CLASS = 0 (DSCP decides) | on | on | adapted from QoSmate `mark_500ms` |
 | H3 | **Slow-TCP upgrade** (< 150 pps → priority) | — | **off**: CAKE's sparse-flow optimisation already boosts low-rate flows, and upgrading gives priority without a basis (violates P5) | on, but as **"fast BE" sub-class**, never RT/IV | QoSmate, modified |
 | H4 | **High-rate UDP in a preferential class** (> 450 pps by default) | Handled by the envelope (§5.7) | on | on | QoSmate `udp_meter`, generalised |
 | H5 | **Bulk ports** (`bulk_tcp_ports`, `bulk_udp_ports`) | CLASS = BK | user | user | QoSmate `TCPBULKPORT`/`UDPBULKPORT` |
@@ -1291,7 +1293,7 @@ config cake 'cake'
     option extra_ingress ''
 
 config hfsc 'hfsc'
-    option rt_budget_up_kbit ''        # '' = max(400, 15% of S)
+    option rt_budget_up_kbit ''        # '' = 15% of S + 400
     option rt_budget_down_kbit ''
     option rt_leaf 'fq_codel'          # fq_codel | pfifo
     option maxdel_ms '24'

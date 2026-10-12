@@ -60,7 +60,7 @@ Because provenance is stored next to the class, the **kernel** enforces "higher 
 | 4 | 4 (user) | PROV already USER → go to envelope (sticky). Otherwise compiled user rules in order; first match sets CLASS, PROV 5 | CLASS, PROV |
 | 5 | 5 (app mark) | Only if PROV < 4: DSCP {EF, CS5, 44} → RT; {AF41, AF42, AF43, CS4, 45} → IV; {CS1, 1} → BK; PROV 4 | CLASS, PROV |
 | 6 | 6 (classifier) | ML singleton verdict written by `veriqd` only when PROV < 3 (PROV 3). Kernel heuristics only when PROV ≤ 2, and **only demote or reset** | CLASS, PROV |
-| 7 | 7 (default) | Nothing: CLASS stays 0, CAKE uses the packet DSCP (Best Effort after washing in the product profile) | Nothing |
+| 7 | 7 (default) | If PROV is still 0: CLASS = BE, PROV = 1 on the first packet seen in either direction (change C15) | After its first packet, a flow's tin never depends on ISP-set DSCP; CAKE `wash` clears DSCP only after tin selection |
 | E | envelope | For CLASS ∈ {RT, IV}: per-flow meters; a violation sets CLASS = BE, SANCT = 1, adds the `ct id` to `@sanctioned` with a 60 s timeout, and notifies `veriqd` (NFLOG group 8) | CLASS, SANCT |
 
 Three design points carry most of the weight:
