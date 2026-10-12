@@ -232,22 +232,22 @@ def build_case3(slide):
         [("“VeriQ finds the cause, protects what you chose, and proves it.”", 11, True, NAVY)],
         [("Localise the fault first", 10.5, True, INK),
          (" (own queue, WAN drop, remote path, Wi-Fi, bad probe), then act with bounded fast guardrails. Every adaptation gets an ", 10.5, False, INK),
-         ("experience receipt: improved / degraded / inconclusive", 10.5, True, INK),
+         ("experience receipt: improved / not improved / inconclusive", 10.5, True, INK),
          (", measured on real calls and video.", 10.5, False, INK)],
     ], fill=CARD2, title_color=AMBER)
     card(slide, 8.86, y, 4.17, h, "Bounded by design", [
         "Never inspects forwarded payload; headers + timing; IPv4 + IPv6",
         [("• ", 10.5, True, BLUE), ("Intents = expiring leases selecting preferential CAKE treatment; misbehaving flows sanctioned; fairness measured", 10.5, True, INK)],
-        "Abstains when unsure: never promotes an uncertain flow",
-        "Shadow mode first; every decision logged; watchdog → SAFE shaper",
+        "Abstention alone never grants priority; leases are explicit, authenticated, expiring",
+        "Shadow mode first; decisions logged; watchdog → SAFE",
     ])
 
     # row B: closed loop
     flow_strip(slide, 2.78, 1.62, "Three speeds: fast guardrails (sub-second) · outcome receipts (tens of seconds) · controlled experiments (lab, for claims)", [
         (1.86, "Observe", "Header + timing of first packets per flow, app marks (NQB / L4S); v4/v6; no payload"),
         (2.12, "Understand", "Marks first, then a calibrated classifier (abstains) · capacity μ ± σ + UDPST idle test (RFC 9946) · fault localiser"),
-        (2.04, "Decide", "Bounded guardrails: shaper = μ − kσ, change-point fast path · leases within budget"),
-        (1.86, "Enforce", "CAKE; leases select preferential tins; ordered, versioned, read-back apply"),
+        (2.04, "Decide", "Evidence-graded: one-step cut to 0.9·Ĝ only with 2 independent sources; else hold or bounded fallback"),
+        (1.86, "Enforce", "Action Checker admits each step → CAKE fwmark tins; ordered, read-back apply"),
         (2.04, "Assess", "Receipts on WebRTC freezes, DASH rebuffers, delay, progress; estimated MOS labelled"),
         (1.71, "Show", "Grafana · 3D twin + replay: measured / estimated / illustrative"),
     ], dark="Assess")
@@ -256,25 +256,25 @@ def build_case3(slide):
     yc, hc = 4.52, 2.18
     card(slide, 0.30, yc, 6.55, hc, "What makes it different", [
         [("1  Fault localisation before action: ", 10.5, True, NAVY),
-         ("WAN drop vs remote path vs Wi-Fi vs lying probe, scored against emulator ground truth; a remote slowdown never triggers a wasteful cut", 10.5, False, INK)],
+         ("WAN drop vs remote path vs Wi-Fi vs lying probe, scored against emulator ground truth; designed to hold when a cut cannot help (measured as inappropriate interventions)", 10.5, False, INK)],
         [("2  Real-app evidence: ", 10.5, True, NAVY),
          ("real encrypted WebRTC calls and DASH players in headless Chromium; we count video freezes and rebuffers, not just pings", 10.5, False, INK)],
         [("3  Payload-free, calibrated classification: ", 10.5, True, NAVY),
          ("marks first; split by flow and by time, no shortcut features (SIGCOMM 2025 lesson); abstains when unsure", 10.5, False, INK)],
         [("4  Honest receipts + replay: ", 10.5, True, NAVY),
-         ("improved / degraded / inconclusive, plus IETF Quality-of-Outcome scores; 3D replay shows inferred vs true ISP queue", 10.5, False, INK)],
+         ("improved / not improved / inconclusive, plus offline Quality-of-Outcome scores; 3D replay shows inferred vs true ISP queue", 10.5, False, INK)],
     ])
     card(slide, 6.98, yc, 6.05, hc, "How we will prove it", [
-        "Real, tuned baselines: FIFO · fq_codel · SQM-CAKE · cake-autorate · qosify-style rules + ablations; ≥10 randomised runs, 95% CIs",
-        "13 scenarios: ISO during call, 100 → 20 Mbps drop, 3 TVs + gaming, remote delay, Wi-Fi, false marks, crash, IPv6…",
+        "Pinned, tuned baselines: SQM-CAKE · cake-autorate · QoSmate (+autorate) · ablations; run = unit, bootstrap CIs, blind faults",
+        "13 core scenarios + 32 adverse conditions: 100 → 20 Mbps drop, remote delay, lying/lost reflectors, Wi-Fi, CPU, crash, IPv6…",
         "Physical Pi 5 kit: the judge picks the fault, VeriQ responds from telemetry alone",
         [("Targets: ", 10.5, True, GREEN),
-         ("0 call freezes in S1 · added delay p95 ≤ 10 ms · settle < 2 s after WAN drop · measured progress for every class", 10.5, True, INK)],
+         ("fewer inappropriate cuts than delay-only autorate · drop response ≤ comparator + 1 s · never worse than static SQM", 10.5, True, INK)],
     ], fill=RGBColor(0xEC, 0xF7, 0xF1), title_color=GREEN)
 
     footer(slide, [
-        ("Stack: ", "Linux tc (CAKE; HTB later) · Python + pyroute2 control plane · LightGBM + conformal · Prometheus/Grafana · React + three.js · Playwright (WebRTC, dash.js) · iperf3 / irtt / Flent"),
-        ("Industry path (designed, not built): ", "RDK-B / OpenWrt package · TR-181 + TR-369 USP fleet management · research tracks: eBPF datapath, Wi-Fi airtime, L4S, multi-gig scaling"),
+        ("Stack: ", "Linux tc + nftables (CAKE; HFSC/HTB backends) · Go daemon veriqd on OpenWrt (procd, UCI, LuCI app) · Python harness + LightGBM/conformal training · three.js twin · Playwright (WebRTC, dash.js)"),
+        ("Industry path (designed, not built): ", "OpenWrt packages (signed feed) · prplOS TR-181/USP and RDK-B with a partner · research tracks: L4S/NQB, Wi-Fi airtime, multi-gig"),
     ])
 
 
